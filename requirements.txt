@@ -1,0 +1,5 @@
+pandas
+openpyxl
+pypdf
+requests
+python-telegram-bot
