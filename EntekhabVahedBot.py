@@ -5,7 +5,6 @@ import pandas as pd
 from pypdf import PdfReader
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
-
 import os  
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
