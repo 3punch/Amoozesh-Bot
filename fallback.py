@@ -913,7 +913,8 @@ def _plain(line: str) -> str:
     return line.strip()
 
 
-def sanitize_model_text(text: str, allow_verdict: bool = False) -> str:
+def sanitize_model_text(text: str, allow_verdict: bool = False,
+                       limit: int = 900) -> str:
     """خطوط پرخطر مدل را حذف می‌کند (حکم بی‌ربط، مارک‌داون، پرحرفی)."""
     if not text:
         return ""
@@ -926,7 +927,7 @@ def sanitize_model_text(text: str, allow_verdict: bool = False) -> str:
         if any(marker in stripped for marker in drop_markers):
             continue
         lines.append(_plain(stripped))
-    return "\n".join(lines).strip()[:900]
+    return "\n".join(lines).strip()[:limit]
 
 
 TIME_RE = re.compile(r"\d{1,2}:\d{2}")

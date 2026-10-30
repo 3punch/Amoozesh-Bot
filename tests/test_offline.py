@@ -334,6 +334,11 @@ class FakePlaceholder:
     async def delete(self):
         self.deleted += 1
 
+    async def edit_text(self, text, *a, **kw):
+        self.text = text
+        self.edited = True
+        return self
+
 
 class FakeMessage:
     def __init__(self, text, chat=None):
@@ -449,11 +454,226 @@ def test_end_to_end():
     check("در گروه با منشن جواب می‌دهد", msg4.answers == ["سلام 👋"], str(msg4.sent))
 
 
+
+# ---------------------------------------------------------------- 3.7) حالت مدل
+
+class FakeCallbackQuery:
+    """همان چیزی که تلگرام هنگام کلیک دکمه می‌دهد."""
+
+    def __init__(self, data, message=None):
+        self.data = data
+        self.message = message or FakeMessage("پاسخ قبلی")
+        self.answered = 0
+        self.edits = []
+
+    async def answer(self, *a, **kw):
+        self.answered += 1
+
+    async def edit_message_text(self, text, *a, **kw):
+        self.edits.append(text)
+        return FakePlaceholder(text)
+
+
+def test_deep_mode():
+    print("\n[۳.۷] حالت تحلیل با مدل (deep)")
+    import asyncio
+    import time
+    import types
+
+    import deep
+    import llm
+    from retrieval import DataStore
+
+    store = DataStore(".")
+
+    # --- زمینه: متن کامل، نه زمینه‌ی بریده‌ی ۴۰۰۰ کاراکتری
+    ctx, meta = deep.build_deep_context(store, "غلامیان یا تهرانیان؟")
+    check("زمینه‌ی حالت مدل هر دو استاد را دارد",
+          "محمد غلامیان" in ctx and "ابوالفضل تهرانیان" in ctx, str(meta))
+    check("خلاصه‌ی عددی قابل استناد هست", "نظر مثبت:" in ctx and "نظر منفی:" in ctx)
+    gholamian = next(x for x in store.professors if "غلامیان" in x.norm_name)
+    longest = max(gholamian.comments, key=len)
+    check("متن کامل نظرها (بدون بریدن ۹۰۰ کاراکتری) رسیده",
+          longest[:80] in ctx, longest[:60])
+    check("ردیف‌های درس این ترم هم هست", "مبانی آنالیز عددی" in ctx)
+
+    # --- اعتبارسنجی تحلیل
+    good = ("نتیجه: بین این دو، غلامیان انتخاب کم‌ریسک‌تری است.\n"
+            "• چند نفر می‌گویند درست‌تر نمره می‌دهد.\n"
+            "• تهرانیان به شانسی‌بودن سوال‌ها متهم شده.\n"
+            "• هر دو نقد جدی گرفته‌اند؛ برای تصمیم نهایی ساعت کلاس را ببین.")
+    ok, why = deep.verify_analysis_text(good, ctx)
+    check("تحلیل معتبر پذیرفته شد", ok, why)
+
+    bad_time, why = deep.verify_analysis_text("کلاس او شنبه ۲۱:۴۵ است.", ctx)
+    check("ساعت ساختگی در تحلیل رد شد", not bad_time and "21:45" in why, why)
+
+    bad_score, why = deep.verify_analysis_text("امتیاز او ۴.۴ از 10 است.", ctx)
+    check("امتیاز ساختگی رد شد", not bad_score and "4.4" in why, why)
+
+    bad_year, why = deep.verify_analysis_text("این درس برای ورودی ۱۳۹۹ است.", ctx)
+    check("سال ساختگی رد شد", not bad_year and "1399" in why, why)
+
+    check("تحلیل خالی رد شد", deep.verify_analysis_text("  ", ctx)[0] is False)
+
+    # --- اجرا با مدل جعلی
+    original = llm.generate
+    try:
+        llm.generate = lambda messages, **kw: good
+        result = deep.analyze(store, "غلامیان یا تهرانیان؟")
+        check("تحلیل مدل با موفقیت ساخته شد", result["ok"], result["reason"])
+        check("زمینه‌ی کامل به مدل داده شد (num_ctx بزرگ‌تر)",
+              result["meta"]["chars"] > 2000, str(result["meta"]))
+
+        llm.generate = lambda messages, **kw: "کلاس او شنبه ۲۱:۴۵ است."
+        result = deep.analyze(store, "استاد غلامیان")
+        check("تحلیل ساختگی قبول نشد", not result["ok"], result["reason"])
+
+        def boom(*a, **kw):
+            raise llm.LLMError("Ollama قطع است")
+
+        llm.generate = boom
+        result = deep.analyze(store, "استاد غلامیان")
+        check("خطای مدل در تحلیل مدیریت شد",
+              not result["ok"] and result["model_failed"], str(result["reason"]))
+
+        llm.generate = lambda messages, **kw: "نتیجه"
+        result = deep.analyze(store, "سیب زمینی چند؟")
+        check("پرسش بی‌داده بدون صدا زدن مدل رد شد",
+              not result["ok"] and not result["model_failed"], result["reason"])
+    finally:
+        llm.generate = original
+
+    # --- دفتر دکمه‌ها: یک‌بار مصرف + انقضا
+    import EntekhabVahedBot as bot
+
+    token = bot.remember_query("غلامیان یا تهرانیان؟", 7)
+    check("توکن دکمه کوتاه است (سقف ۶۴ بایت تلگرام)", len(token) == 8)
+    check("دکمه‌ی معتبر بازیابی شد", bot.recall_query(token)["query"].startswith("غلامیان"))
+    check("دکمه یک‌بار مصرف است", bot.recall_query(token) is None)
+    token2 = bot.remember_query("سوال قدیمی")
+    bot.PENDING[token2]["ts"] = time.time() - bot.PENDING_TTL - 5
+    check("دکمه‌ی منقضی بازیابی نمی‌شود", bot.recall_query(token2) is None)
+
+
+# ---------------------------------------------------------------- 4) مسیر حالت مدل در تلگرام
+
+def test_deep_end_to_end():
+    print("\n[۴.۱] مسیر تلگرامِ حالت مدل (دکمه و /deep)")
+    import asyncio
+    import types
+
+    import EntekhabVahedBot as bot
+    import llm
+
+    original = llm.generate
+
+    class KeyedPlaceholder(FakePlaceholder):
+        def __init__(self, text, kwargs=None):
+            super().__init__(text)
+            self.kwargs = kwargs or {}
+
+    class KeyedMessage(FakeMessage):
+        async def reply_text(self, text, *a, **kw):
+            ph = KeyedPlaceholder(text, kw)
+            self.placeholders.append(ph)
+            self.sent.append(text)
+            return ph
+
+        async def edit_text(self, text, *a, **kw):
+            self.edited = text
+            return FakePlaceholder(text)
+
+    analysis = ("نتیجه: غلامیان انتخاب کم‌ریسک‌تری است.\n"
+                "• درست‌تر نمره می‌دهد.\n"
+                "• تهرانیان بیشتر نقد شده است.")
+    try:
+        llm.generate = lambda messages, **kw: analysis
+
+        # ۱) پاسخ سریع + دکمه‌ی تحلیل
+        bot.MODEL_SUMMARY = False
+        bot.MODEL_READY = True
+        ctx = types.SimpleNamespace(bot=types.SimpleNamespace(id=1, username="b"))
+        msg = KeyedMessage("غلامیان یا تهرانیان؟")
+        asyncio.run(bot.handle_message(types.SimpleNamespace(message=msg), ctx))
+        last = msg.placeholders[-1]
+        check("پاسخ سریع بدون معطلی مدل آمد", llm.generate is not None)
+        markup = last.kwargs.get("reply_markup")
+        check("دکمه‌ی تحلیل زیر پاسخ سریع هست", markup is not None)
+        button = markup.inline_keyboard[0][0] if markup else None
+        check("برچسب دکمه روشن است", button and "تحلیل" in button.text, str(button))
+        check("callback_data کوتاه است", button and len(button.callback_data) < 64)
+        check("پاسخ سریع همان مقایسه‌ی داده است", "⚖️" in last.text, last.text[:40])
+
+        # ۲) کلیک روی دکمه
+        cq = FakeCallbackQuery(button.callback_data)
+        asyncio.run(bot.deep_callback(types.SimpleNamespace(callback_query=cq), ctx))
+        check("به کلیک دکمه پاسخ داده شد", cq.answered == 1)
+        check("پیام اول به «در حال تحلیل» تغییر کرد",
+              len(cq.edits) == 2 and "در حال تحلیل" in cq.edits[0], str(cq.edits[:1]))
+        check("تحلیل مدل جایگزین شد", "🧠 تحلیل مدل" in cq.edits[-1], cq.edits[-1][:60])
+        check("خروجی، فهم مدل است نه فهرست داده", "کم‌ریسک‌تری" in cq.edits[-1])
+        check("داده‌ی پایه برای شفافیت ضمیمه شد", "📊 داده‌ی پایه" in cq.edits[-1])
+
+        # ۳) ضربه‌ی دوم روی همان دکمه ⇒ منقضی، نه تحلیل دوباره
+        cq2 = FakeCallbackQuery(button.callback_data)
+        asyncio.run(bot.deep_callback(types.SimpleNamespace(callback_query=cq2), ctx))
+        check("ضربه‌ی دوم پیام منقضی گرفت", "منقضی" in cq2.edits[-1], cq2.edits[-1][:60])
+
+        # ۴) دستور /deep
+        msg_cmd = KeyedMessage("/deep غلامیان یا تهرانیان؟")
+        asyncio.run(bot.deep_command(
+            types.SimpleNamespace(message=msg_cmd),
+            types.SimpleNamespace(args=["غلامیان", "یا", "تهرانیان؟"],
+                                  bot=types.SimpleNamespace(id=1, username="b")),
+        ))
+        check("/deep مستقیم تحلیل می‌دهد",
+              "🧠 تحلیل مدل" in msg_cmd.placeholders[-1].text,
+              msg_cmd.placeholders[-1].text[:60])
+
+        # ۵) مدل خطا داد ⇒ صادقانه + پاسخ معتبر داده
+        def boom(*a, **kw):
+            raise llm.LLMError("Ollama قطع است")
+
+        llm.generate = boom
+        token = bot.remember_query("غلامیان یا تهرانیان؟")
+        cq3 = FakeCallbackQuery(f"deep:{token}")
+        asyncio.run(bot.deep_callback(types.SimpleNamespace(callback_query=cq3), ctx))
+        check("خطای مدل صادقانه گفته شد", "مدل در دسترس نبود" in cq3.edits[-1],
+              cq3.edits[-1][:80])
+        check("پاسخ معتبر داده در همان پیام ماند", "⚖️" in cq3.edits[-1])
+
+        # ۶) حالت مدل خاموش ⇒ دکمه نباید بیاید
+        llm.generate = lambda *a, **kw: analysis
+        bot.MODEL_READY = False
+        msg_nb = KeyedMessage("استاد ابوالقاسمی")
+        asyncio.run(bot.handle_message(types.SimpleNamespace(message=msg_nb), ctx))
+        check("بدون مدل، دکمه نمایش داده نمی‌شود",
+              msg_nb.placeholders[-1].kwargs.get("reply_markup") is None)
+
+        # ۷) /deep بدون مدل ⇒ پاسخ سریع با توضیح
+        msg_off = KeyedMessage("/deep استاد ابوالقاسمی")
+        asyncio.run(bot.deep_command(
+            types.SimpleNamespace(message=msg_off),
+            types.SimpleNamespace(args=["استاد", "ابوالقاسمی"],
+                                  bot=types.SimpleNamespace(id=1, username="b")),
+        ))
+        off_text = msg_off.placeholders[-1].text
+        check("‎/deep بدون مدل پاسخ سریع می‌دهد",
+              "حالت مدل روی این اجرا فعال نیست" in off_text, off_text[:60])
+        check("‎/deep بدون مدل داده را هم می‌آورد", "ابوالقاسمی" in off_text)
+    finally:
+        llm.generate = original
+        bot.MODEL_READY = False
+
+
 if __name__ == "__main__":
     test_retrieval()
     test_llm_client()
     test_prompts()
     test_fallback()
+    test_deep_mode()
     test_end_to_end()
+    test_deep_end_to_end()
     print("\n" + ("✅ همه تست‌ها پاس شد." if not FAILS else f"❌ {len(FAILS)} تست ناموفق: {FAILS}"))
     sys.exit(1 if FAILS else 0)

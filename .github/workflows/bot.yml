@@ -1,8 +1,12 @@
 name: Run Telegram Bot 24/7
 
 # ربات کاملاً داخل GitHub Actions اجرا می‌شود:
-#   نصب Ollama → مدل Gemma → اجرای ربات → چرخش خودکار قبل از سقف ۶ ساعته
+#   نصب Ollama → مدل Qwen → اجرای ربات → چرخش خودکار قبل از سقف ۶ ساعته
 # هیچ چیزی لازم نیست روی سیستم خودت اجرا شود.
+#
+# دو حالت پاسخ:
+#   • سریع (همیشه): پاسخ از داده، زیر یک ثانیه.
+#   • مدل (انتخابی): دکمه‌ی زیر پاسخ یا /deep؛ مدل متن کامل را می‌خواند (۲ تا ۴ دقیقه).
 #
 # cron هر ۵ ساعت یک run در صف می‌گذارد؛ با concurrency (بدون cancel) همیشه
 # دقیقاً یک نمونه در حال اجراست و نمونه‌ی بعدی بلافاصله جایش را می‌گیرد.
@@ -29,9 +33,11 @@ jobs:
     env:
       # Qwen2.5:7b: فارسی بهتر از Gemma، بدون حالت استدلال. مقایسه: docs/model-benchmark.md
       MODEL_NAME: qwen2.5:7b
-      # "0" = پاسخ فوری از داده‌های قطعی؛ Ollama نصب/دانلود نمی‌شود و مدل صدا زده نمی‌شود.
-      # "1" = یک جمع‌بندی کوتاه مدل هم اضافه شود (نصب Ollama + ~۵ گیگ مدل + ۲-۴ دقیقه انتظار).
+      # "0" = پاسخ فوری از داده‌های قطعی (بدون جمع‌بندی خودکار مدل).
       MODEL_SUMMARY: "0"
+      # "1" = دکمه‌ی «🧠 تحلیل با مدل» زیر پاسخ + دستور /deep فعال باشد.
+      # مدل فقط وقتی صدا زده می‌شود که کاربر خودش بخواهد؛ پاسخ سریع همان اول می‌آید.
+      DEEP_MODE: "1"
       THINK: "0"
       OLLAMA_HOST: http://127.0.0.1:11434
       OLLAMA_KEEP_ALIVE: 6h
@@ -59,7 +65,7 @@ jobs:
 
       # وزن‌های مدل کش می‌شوند تا هر بار ۳.۳ گیگ دانلود نشود
       - name: Cache Ollama models
-        if: env.MODEL_SUMMARY == '1'
+        if: env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'
         uses: actions/cache@v4
         with:
           path: ~/.ollama/models
@@ -68,13 +74,13 @@ jobs:
             ollama-models-
 
       - name: Install Ollama
-        if: env.MODEL_SUMMARY == '1'
+        if: env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'
         run: |
           curl -fsSL https://ollama.com/install.sh | sh
           ollama --version
 
       - name: Start Ollama server
-        if: env.MODEL_SUMMARY == '1'
+        if: env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'
         run: |
           mkdir -p ~/.ollama
           nohup ollama serve > /tmp/ollama.log 2>&1 &
@@ -87,13 +93,13 @@ jobs:
           echo "Ollama did not start"; tail -50 /tmp/ollama.log; exit 1
 
       - name: Pull model
-        if: env.MODEL_SUMMARY == '1'
+        if: env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'
         run: |
           ollama pull "$MODEL_NAME"
           ollama list
 
       - name: Warm up model
-        if: env.MODEL_SUMMARY == '1'
+        if: env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'
         run: |
           curl -fsS "$OLLAMA_HOST/api/generate" \
             -d "{\"model\":\"$MODEL_NAME\",\"prompt\":\"سلام\",\"stream\":false,\"options\":{\"num_predict\":8}}" \
@@ -118,5 +124,5 @@ jobs:
         run: bash scripts/run_bot.sh
 
       - name: Show Ollama log
-        if: always() && env.MODEL_SUMMARY == '1'
+        if: always() && (env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1')
         run: tail -50 /tmp/ollama.log || true

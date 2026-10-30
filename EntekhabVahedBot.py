@@ -1,12 +1,15 @@
 """
-ربات دستیار انتخاب واحد — نسخه‌ی مدل محلی.
+ربات دستیار انتخاب واحد — دو حالت پاسخ.
 
-به‌جای فراخوانی API ابری (OpenRouter) از مدل Gemma که با Ollama روی همان
-ماشین اجرا می‌شود استفاده می‌کند؛ بنابراین هیچ API key ای لازم نیست.
+۱) حالت سریع (پیش‌فرض): پاسخ از داده ساخته می‌شود، زیر یک ثانیه. مدل صدا زده نمی‌شود.
+۲) حالت مدل: کاربر با دکمه‌ی «🧠 تحلیل با مدل» زیر پاسخ سریع (یا با /deep) از مدل
+   می‌خواهد متن کامل نظرها را بخواند و خودش تحلیل کند. روی CPU چند دقیقه طول می‌کشد.
+
+هیچ API key ای لازم نیست؛ مدل با Ollama روی همان ماشین اجرا می‌شود.
 
 اجرا:
-    ollama serve            # یا سرویس systemd
-    ollama pull gemma3:4b
+    ollama serve                     # فقط برای حالت مدل
+    ollama pull qwen2.5:7b
     TELEGRAM_BOT_TOKEN=... python EntekhabVahedBot.py
 """
 
@@ -14,19 +17,24 @@ import asyncio
 import io
 import logging
 import os
+import secrets
 import sys
+import threading
+import time
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import (
     ApplicationBuilder,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
     filters,
 )
 
+import deep
 import fallback
 import llm
 from prompts import FALLBACK_MESSAGE, GREETING, build_messages
@@ -42,11 +50,43 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 MAX_MESSAGE_LEN = 4000
 # چند دقیقه ربات بماند؛ صفر = اجرا تا وقتی متوقف شود (مفید برای اجرای دستی/محلی)
 RUN_DURATION_MINUTES = float(os.getenv("RUN_DURATION_MINUTES", "0") or 0)
-# آیا جمع‌بندی زبانی مدل به پاسخ قطعی ضمیمه شود؟ (۱ = بله)
-# آیا جمع‌بندی زبانی مدل به پاسخ قطعی ضمیمه شود؟
+# آیا جمع‌بندی زبانی مدل خودکار به همه‌ی پاسخ‌ها ضمیمه شود؟
 # "0" (پیش‌فرض) = پاسخ فوری از داده‌های قطعی، بدون صدا زدن مدل و بدون Ollama.
 # "1" = یک جمع‌بندی کوتاه مدل هم اضافه می‌شود (روی CPU کند است).
 MODEL_SUMMARY = os.getenv("MODEL_SUMMARY", "0") == "1"
+# حالت «تحلیل با مدل» به‌صورت انتخابی: دکمه‌ی زیر پاسخ یا دستور /deep
+DEEP_ENABLED = os.getenv("DEEP_MODE", "1") == "1"
+# آیا مدل واقعاً در دسترس است؟ (در on_startup بررسی می‌شود)
+MODEL_READY = False
+
+DEEP_BUTTON = "🧠 تحلیل با مدل (۲ تا ۴ دقیقه)"
+PENDING_TTL = 30 * 60          # دکمه‌ی هر پاسخ نیم ساعت معتبر است
+PENDING_MAX = 400              # سقف دکمه‌های فعال (جلوگیری از رشد حافظه)
+PENDING: dict[str, dict] = {}  # توکن کوتاه ⇒ {query, user, ts}
+
+
+def remember_query(query: str, user_id: int | None = None) -> str:
+    """پرسش را برای دکمه‌ی تحلیل مدل نگه می‌دارد و یک توکن کوتاه برمی‌گرداند."""
+    now = time.time()
+    for token, entry in list(PENDING.items()):
+        if now - entry["ts"] > PENDING_TTL:
+            PENDING.pop(token, None)
+    while len(PENDING) >= PENDING_MAX:
+        PENDING.pop(next(iter(PENDING)))
+    token = secrets.token_hex(4)
+    PENDING[token] = {"query": query, "user": user_id, "ts": now}
+    return token
+
+
+def recall_query(token: str) -> dict | None:
+    """توکن دکمه را یک‌بار مصرف می‌کند (ضربه‌ی دوم «منقضی» می‌گیرد)."""
+    entry = PENDING.pop(token, None)
+    if entry is None:
+        return None
+    if time.time() - entry["ts"] > PENDING_TTL:
+        return None
+    return entry
+
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -82,13 +122,12 @@ def split_message(text: str, limit: int = MAX_MESSAGE_LEN) -> list[str]:
     return [c.strip() for c in chunks if c.strip()]
 
 
-async def send_long(message, text: str) -> None:
-    """ارسال پاسخ، با شکستن به تکه‌های ۴۰۹۶ کاراکتری."""
-    for i, chunk in enumerate(split_message(text)):
-        if i == 0:
-            await message.reply_text(chunk)
-        else:
-            await message.reply_text(chunk)
+async def send_long(message, text: str, reply_markup=None) -> None:
+    """ارسال پاسخ، با شکستن به تکه‌های ۴۰۹۶ کاراکتری (دکمه روی تکه‌ی آخر)."""
+    chunks = split_message(text)
+    for i, chunk in enumerate(chunks):
+        last = i == len(chunks) - 1
+        await message.reply_text(chunk, reply_markup=reply_markup if last else None)
 
 
 def _looks_useful(text: str) -> bool:
@@ -115,6 +154,158 @@ def is_addressed_to_bot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(GREETING)
+
+
+def can_offer_deep() -> bool:
+    """دکمه‌ی تحلیل مدل فقط وقتی معنا دارد که مدل واقعاً در دسترس باشد."""
+    return DEEP_ENABLED and MODEL_READY and not MODEL_SUMMARY
+
+
+def deep_keyboard(query: str, user_id: int | None = None) -> InlineKeyboardMarkup | None:
+    if not can_offer_deep() or not query.strip():
+        return None
+    token = remember_query(query, user_id)
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(DEEP_BUTTON, callback_data=f"deep:{token}")
+    ]])
+
+
+def base_summary(store, query: str) -> str:
+    """یک خط داده‌ی پایه که تحلیل مدل روی آن سوار است (برای شفافیت)."""
+    parts: list[str] = []
+    for name in deep._names_in_query(store, query):
+        profile = fallback.professor_profile(store, name) or {}
+        parts.append(
+            f"{name}: {fallback._fa(profile.get('positive', 0))} مثبت / "
+            f"{fallback._fa(profile.get('negative', 0))} منفی از "
+            f"{fallback._fa(profile.get('comments', 0))} پیام"
+        )
+    if not parts:
+        facts = fallback.answer(store, query)
+        if facts:
+            first = facts.strip().splitlines()[0]
+            parts.append(first.lstrip("🎯 ").strip())
+    return " · ".join(parts)
+
+
+def compose_deep_text(store, query: str, result: dict) -> str:
+    """متن نهایی پیام حالت مدل: تحلیل مدل یا شفاف‌سازی شکست + پاسخ قطعی."""
+    facts = fallback.answer(store, query) or ""
+    summary = base_summary(store, query)
+
+    if result.get("ok"):
+        lines = [f"🧠 تحلیل مدل ({result.get('model', llm.MODEL_NAME)})", ""]
+        lines.append(result["text"].strip())
+        if summary:
+            lines.append("")
+            lines.append(f"📊 داده‌ی پایه: {summary}")
+        return "\n".join(lines)
+
+    # شکست: صادقانه بگو چرا، و همان پاسخ معتبر داده را نگه دار
+    reason = result.get("reason") or "دلیل نامشخص"
+    if result.get("model_failed"):
+        head = f"⚠️ مدل در دسترس نبود ({reason})."
+    elif result.get("text"):
+        head = f"⚠️ تحلیل مدل با داده هم‌خوان نبود و نمایش داده نشد ({reason})."
+    else:
+        head = f"⚠️ مدل تحلیل قابل استنادی نداد ({reason})."
+    if facts:
+        return f"{head}\nهمان پاسخ داده معتبر است:\n\n{facts}"
+    return head
+
+
+# Ollama روی رانر فقط یک درخواست را هم‌زمان پردازش می‌کند؛ اگر دو نفر دکمه را
+# بزنند، درخواست دوم صف می‌شود نه اینکه هر دو کشته شوند یا همدیگر را کند کنند.
+DEEP_RUN_LOCK = threading.Lock()
+
+
+def _analyze_serialized(store, query: str) -> dict:
+    with DEEP_RUN_LOCK:
+        return deep.analyze(store, query)
+
+
+async def run_deep(store, query: str) -> str:
+    """اجرای تحلیل مدل (در thread جدا و یکی‌یکی، چون چند دقیقه طول می‌کشد)."""
+    result = await asyncio.to_thread(_analyze_serialized, store, query)
+    log.info(
+        "حالت مدل: %s | ok=%s | دلیل=%s | %.1f ثانیه | زمینه %s کاراکتر",
+        query[:50], result.get("ok"), result.get("reason"),
+        result.get("elapsed", 0), result.get("meta", {}).get("chars"),
+    )
+    return compose_deep_text(store, query, result)
+
+
+async def _edit_or_split(query, text: str) -> None:
+    """ویرایش پیام؛ اگر بلندتر از سقف تلگرام بود، ادامه را جدا می‌فرستد."""
+    chunks = split_message(text) or ["متأسفم، پاسخی آماده نشد."]
+    try:
+        await query.edit_message_text(chunks[0])
+    except BadRequest as exc:
+        log.warning("ویرایش پیام ناموفق: %s", exc)
+        if query.message is not None:
+            await query.message.reply_text(chunks[0])
+    for chunk in chunks[1:]:
+        if query.message is not None:
+            await query.message.reply_text(chunk)
+
+
+async def deep_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دکمه‌ی «تحلیل با مدل» زیر پاسخ سریع."""
+    query = update.callback_query
+    if query is None:
+        return
+    await query.answer()
+
+    token = (query.data or "").split(":", 1)[-1]
+    entry = recall_query(token)
+    if entry is None:
+        await _edit_or_split(
+            query, "⌛️ این دکمه منقضی شده است؛ لطفاً پرسش را دوباره بفرست."
+        )
+        return
+
+    await _edit_or_split(
+        query,
+        f"🧠 در حال تحلیل متن کامل با مدل «{llm.MODEL_NAME}»…\n"
+        "این کار روی CPU بین ۲ تا ۴ دقیقه طول می‌کشد. لازم نیست کاری کنی؛ "
+        "نتیجه همین‌جا جایگزین می‌شود.",
+    )
+    text = await run_deep(STORE, entry["query"])
+    await _edit_or_split(query, text)
+
+
+async def deep_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/deep <سوال> — از همان اول مسیر مدل."""
+    if not update.message:
+        return
+    if not is_addressed_to_bot(update, context):
+        return
+    question = " ".join(context.args or []).strip()
+    if not question:
+        await update.message.reply_text(
+            "متن پرسش را بعد از دستور بنویس؛ مثال:\n/deep غلامیان یا تهرانیان؟"
+        )
+        return
+
+    if not MODEL_READY:
+        facts = fallback.answer(STORE, question) or ""
+        note = ("⚠️ حالت مدل روی این اجرا فعال نیست (Ollama/مدل در دسترس نیست)."
+                "\nپاسخ فوری از داده:\n\n")
+        await send_long(update.message, note + (facts or GREETING))
+        return
+
+    placeholder = await update.message.reply_text(
+        f"🧠 در حال تحلیل متن کامل با مدل «{llm.MODEL_NAME}»… (۲ تا ۴ دقیقه)"
+    )
+    text = await run_deep(STORE, question)
+    chunks = split_message(text) or [FALLBACK_MESSAGE]
+    try:
+        await placeholder.edit_text(chunks[0])
+    except BadRequest as exc:
+        log.warning("ویرایش پیام ناموفق: %s", exc)
+        await update.message.reply_text(chunks[0])
+    for chunk in chunks[1:]:
+        await update.message.reply_text(chunk)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -189,8 +380,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except TelegramError:
         pass
 
+    # دکمه‌ی «تحلیل با مدل» فقط زیر پاسخ واقعی داده می‌آید (نه پیام راهنما)
+    keyboard = None
+    if facts:
+        user = getattr(update.message, "from_user", None)
+        keyboard = deep_keyboard(user_text, getattr(user, "id", None))
+
     try:
-        await send_long(update.message, answer)
+        await send_long(update.message, answer, reply_markup=keyboard)
     except BadRequest as exc:
         log.error("ارسال پاسخ ناموفق: %s", exc)
         await update.message.reply_text(FALLBACK_MESSAGE)
@@ -208,21 +405,26 @@ async def on_startup(app) -> None:
         app.create_task(auto_stop(app, RUN_DURATION_MINUTES))
         log.info("این نمونه %.0f دقیقه اجرا می‌شود، سپس جایش را به run بعدی می‌دهد.",
                  RUN_DURATION_MINUTES)
-    if not MODEL_SUMMARY:
-        log.info("MODEL_SUMMARY=0 ⇒ پاسخ‌ها از داده‌های قطعی ساخته می‌شوند؛ "
-                 "نیازی به Ollama نیست.")
+    global MODEL_READY
+    if not (MODEL_SUMMARY or DEEP_ENABLED):
+        log.info("هم MODEL_SUMMARY و هم DEEP_MODE خاموش‌اند ⇒ پاسخ‌ها فقط از داده "
+                 "ساخته می‌شوند؛ نیازی به Ollama نیست.")
         return
     if not llm.wait_for_server(timeout=120):
-        log.error("سرویس Ollama در %s بالا نیامد.", llm.OLLAMA_HOST)
+        log.error("سرویس Ollama در %s بالا نیامد؛ حالت مدل غیرفعال می‌ماند.",
+                  llm.OLLAMA_HOST)
         return
     log.info("سرویس Ollama در دسترس است (%s).", llm.OLLAMA_HOST)
     if not llm.model_is_available():
         log.error(
-            "مدل «%s» نصب نیست. اجرا کنید: ollama pull %s", llm.MODEL_NAME, llm.MODEL_NAME
+            "مدل «%s» نصب نیست (ollama pull %s)؛ حالت مدل غیرفعال می‌ماند.",
+            llm.MODEL_NAME, llm.MODEL_NAME,
         )
         return
     log.info("مدل «%s» آماده است؛ در حال بارگذاری در حافظه…", llm.MODEL_NAME)
     await asyncio.to_thread(llm.preload)
+    MODEL_READY = True
+    log.info("حالت «تحلیل با مدل» فعال شد (دکمه‌ی زیر پاسخ + /deep).")
 
 
 def main() -> None:
@@ -237,9 +439,14 @@ def main() -> None:
         .build()
     )
     app.add_handler(CommandHandler(["start", "help"], start_command))
+    app.add_handler(CommandHandler("deep", deep_command))
+    app.add_handler(CallbackQueryHandler(deep_callback, pattern=r"^deep:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    log.info("🚀 ربات با مدل محلی «%s» فعال شد!", llm.MODEL_NAME)
+    log.info(
+        "🚀 ربات فعال شد | پاسخ سریع: همیشه | حالت مدل «%s»: %s",
+        llm.MODEL_NAME, "فعال" if MODEL_READY else "غیرفعال",
+    )
     app.run_polling(drop_pending_updates=True)
 
 
