@@ -239,6 +239,23 @@ def test_fallback():
 
     check("سوال بی‌ربط ⇒ None", fallback.answer(store, "سلام") is None)
 
+    # --- استاد + درس: فقط ارائه‌های همان درس
+    both = fallback.answer(store, "ساختمان داده و الگوریتم ها با همامی چه زمانی ارائه شده؟")
+    check("پرسش استاد+درس فقط همان درس را می‌آورد",
+          both and "ساختمان داده" in both and "اصول سیستم" not in both, str(both)[:120])
+    check("سرتیتر به درس محدود شده", both and "ارائه‌های این استاد در" in both)
+
+    # --- نام کوتاه/متفاوت درس در پرسش مجاز بودن
+    alias = fallback.answer(store, "داده کاوی برای ورودی ۱۴۰۱")
+    check("نام کوتاه درس با قوانین تطبیق خورد",
+          alias and "مقدمه ای بر داده کاوی" in alias and "مجاز است" in alias, str(alias)[:120])
+
+    # --- پرسش کاملاً بی‌ربط: پاسخ صریح، نه سکوت و نه درس اشتباه
+    miss = fallback.answer(store, "تحقیق در عملیات ۱۴۰۴")
+    check("درس ناموجود ⇒ پاسخ «پیدا نکردم»",
+          miss and "پیدا نکردم" in miss and "روش تحقیق" not in miss, str(miss)[:120])
+    check("ارقام پرسش در پاسخ فارسی شد", miss and "۱۴۰۴" in miss, str(miss)[:80])
+
     # --- نگهبان ضدتوهم با خروجی واقعی gemma3:4b (تست رگرسیون)
     ctx_time, _ = store.build_context(
         "ساختمان داده و الگوریتم ها برای ورودی ۱۴۰۴ با همامی چه زمانی ارائه شده؟"
@@ -339,8 +356,8 @@ def test_end_to_end():
 
     msg_unknown = FakeMessage("سیب زمینی چند؟")
     asyncio.run(bot.handle_message(types.SimpleNamespace(message=msg_unknown), ctx_fast))
-    check("پیش‌فرض: سوال بی‌ربط راهنما گرفت (بدون معطلی مدل)",
-          "دستیار انتخاب واحد" in msg_unknown.answers[-1], msg_unknown.answers[-1][:60])
+    check("پیش‌فرض: سوال بی‌ربط پاسخ صریح «پیدا نشد» گرفت (بدون معطلی مدل)",
+          "پیدا نکردم" in msg_unknown.answers[-1], msg_unknown.answers[-1][:60])
     check("پیش‌فرض: مدل حتی برای سوال بی‌ربط صدا زده نشد", called["n"] == 0, str(called))
 
     # --- حالت با مدل
@@ -363,7 +380,7 @@ def test_end_to_end():
     reply = msg.answers[-1]
     check("پاسخ با نتیجه‌ی ربات شروع می‌شود", reply.startswith("🎯 نتیجه:"), reply[:60])
     check("حکم درست است", "مجاز است ✅" in reply, reply[:80])
-    check("دلیل از داده آمده", "ویژه‌ی ورودی 1403" in reply, reply[:120])
+    check("دلیل از داده آمده", "ویژه‌ی ورودی ۱۴۰۳" in reply, reply[:120])
     check("جمع‌بندی مدل ضمیمه شد", "جمع‌بندی مدل" in reply and "ویژه‌ی ورودی ۱۴۰۳" in reply)
     check("پیام «در حال بررسی…» پاک شد", msg.placeholders[0].deleted == 1)
 
@@ -387,8 +404,8 @@ def test_end_to_end():
     # خطای مدل و سوال بی‌ربط ⇒ پیام راهنما (نه سکوت)
     msg5 = FakeMessage("سیب زمینی چند؟")
     asyncio.run(bot.handle_message(types.SimpleNamespace(message=msg5), context))
-    check("سوال بی‌ربط بدون مدل پیام راهنما گرفت", msg5.answers and "نتوانستم" in msg5.answers[-1],
-          str(msg5.answers))
+    check("سوال بی‌ربط بدون مدل پاسخ صریح گرفت",
+          msg5.answers and "پیدا نکردم" in msg5.answers[-1], str(msg5.answers))
 
     # در گروه، بدون منشن و بدون ریپلای، جواب نمی‌دهد
     msg3 = FakeMessage("سلام بچه‌ها")

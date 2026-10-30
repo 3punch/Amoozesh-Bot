@@ -40,8 +40,15 @@ STOPWORDS = set(
     واحد واحده واحدم چند چندتا کجا کِی کی چرا آیا میخوام می‌خوام میخواستم میشه
     یکی یه یه‌کم خیلی بچه بچه‌ها بچه ها دوستان کسی کسی‌ میدونه می‌دونه بدونم بگین
     اطلاعات راهنمایی کمک لطفاً دوست داشتم داشتید دارید کردم کردم کدام
-    استادی استادیه استادش هستن هستید چجور چجوری بگی بگه ریاضی کسی بچه""".split()
+    کلاس کیه چیه چطور
+    استادی استادیه استادش هستن هستید چجور چجوری بگی بگه کسی بچه""".split()
 )
+
+
+# پیشوندهای رایج نام درس که دانشجو معمولاً در پرسش حذف می‌کند
+COURSE_PREFIX = {
+    "مقدمه", "ای", "بر", "آشنایی", "با", "اصول", "مبانی", "کلیات", "درس",
+}
 
 
 def normalize(text) -> str:
@@ -130,6 +137,11 @@ _SCHED_DAY_RE = re.compile(
 )
 _TIME_RE = re.compile(r"\d{1,2}:\d{2}")
 _DAY_NAMES = ("یکشنبه", "سه شنبه", "چهارشنبه", "پنجشنبه", "دوشنبه", "شنبه", "جمعه")
+
+
+def fa_digits(text: str) -> str:
+    """ارقام لاتین را برای نمایش به فارسی تبدیل می‌کند (فقط متن، نه کلید)."""
+    return str(text).translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹"))
 
 
 def short_schedule(raw) -> str:
@@ -333,13 +345,29 @@ class DataStore:
                 score += 3 if len(kw) >= 4 else 2
         return score
 
+    @staticmethod
+    def _course_match_hits(row: pd.Series, kws: list[str]) -> tuple[int, float]:
+        """(تعداد کلیدواژه‌های یافته‌شده، نسبت پوشش نام درس)."""
+        name_tokens = set(normalize(str(row.get("نام درس", ""))).split())
+        haystack = normalize(f"{row.get('نام درس', '')} {row.get('استاد', '')}")
+        hits = [kw for kw in kws if kw in haystack]
+        if not name_tokens:
+            return len(hits), 0.0
+        in_name = [kw for kw in hits if kw in name_tokens]
+        return len(hits), len(in_name) / len(name_tokens)
+
     def _top_courses(self, kws: list[str], limit: int) -> list[pd.Series]:
         if self.courses is None or not kws:
             return []
         scored = []
         for _, row in self.courses.iterrows():
             score = self._course_match_score(row, kws)
-            if score > 0:
+            if score <= 0:
+                continue
+            hits, coverage = self._course_match_hits(row, kws)
+            # یک کلیدواژه‌ی تنها فقط وقتی کافی است که تقریباً کل نام درس را
+            # بسازد؛ وگرنه «تحقیق در عملیات» به «روش تحقیق و گزارش نویسی» می‌چسبد.
+            if hits >= 2 or coverage >= 0.5 or len(kws) <= 1:
                 scored.append((score, row))
         scored.sort(key=lambda x: x[0], reverse=True)
         return [row for _, row in scored[:limit]]
@@ -431,6 +459,18 @@ class DataStore:
         for cand in candidates:
             if len(cand) > 3 and cand in nquery and len(cand) > len(best):
                 best = cand
+
+        # اگر نام کامل در پرسش نبود، «هسته‌ی نام» را می‌سنجیم: دانشجو معمولاً
+        # پیشوندهایی مثل «مقدمه ای بر» یا «اصول» را حذف می‌کند («داده کاوی»
+        # در برابر «مقدمه ای بر داده کاوی»).
+        if not best:
+            q_tokens = set(nquery.split())
+            for cand in candidates:
+                core = [t for t in cand.split() if t not in COURSE_PREFIX]
+                if len(core) < 2 or len(core) < len(cand.split()) - 3:
+                    continue
+                if all(t in q_tokens for t in core) and len(cand) > len(best):
+                    best = cand
         if not best:
             return None
 
@@ -460,16 +500,17 @@ class DataStore:
                 labels.append(f"{professor} ({when})" if when else professor)
             reason = (f"فقط در ارائه‌ی {'، '.join(labels)}؛ "
                       f"بقیه‌ی ارائه‌های این درس ویژه‌ی ورودی "
-                      f"{'، '.join(course_rules)} است.")
+                      f"{fa_digits('، '.join(course_rules))} است.")
         elif allowed:
             if course_rules:
-                reason = f"این درس ویژه‌ی ورودی {'، '.join(course_rules)} ارائه شده است."
+                reason = (f"این درس ویژه‌ی ورودی {fa_digits('، '.join(course_rules))} "
+                          "ارائه شده است.")
             else:
                 reason = ("این درس در فهرست دروس محدودشده نیست و "
                           "همه‌ی ورودی‌ها می‌توانند آن را اخذ کنند.")
         else:
-            reason = (f"این درس فقط برای ورودی {'، '.join(course_rules)} مجاز است "
-                      "و برای این ورودی باز نیست.")
+            reason = (f"این درس فقط برای ورودی {fa_digits('، '.join(course_rules))} "
+                      "مجاز است و برای این ورودی باز نیست.")
 
         return {
             "course": best,
@@ -488,7 +529,7 @@ class DataStore:
             return ""
         verdict = "مجاز است" if info["allowed"] else "مجاز نیست"
         return (
-            f"سوال: آیا «{info['course']}» برای ورودی {info['year']} مجاز است؟ "
+            f"سوال: آیا «{info['course']}» برای ورودی {fa_digits(info['year'])} مجاز است؟ "
             f"← {verdict} ({info['reason']})"
         )
 

@@ -81,8 +81,13 @@ def _fa(value) -> str:
 
 
 def _cell(value) -> str:
+    """مقدار یک خانه‌ی جدول، آماده برای نمایش (بدون nan، با ارقام فارسی)."""
     text = "" if value is None else str(value).strip()
-    return "" if text.lower() in ("nan", "none", "-") else text
+    if text.lower() in ("nan", "none", "-"):
+        return ""
+    text = re.sub(r"\s+", " ", text.replace("\u200c", " "))
+    text = text.replace("ي", "ی").replace("ك", "ک")
+    return text.translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹"))
 
 
 def _clean(value: str) -> str:
@@ -265,7 +270,7 @@ def _verdict(scores: dict[str, int], polarity: dict[str, tuple[int, int]],
 # ---------------------------------------------------------------- پاسخ‌ها
 
 
-def professor_answer(store, name: str) -> str | None:
+def professor_answer(store, name: str, course: str = "") -> str | None:
     """نتیجه‌گیری ربات درباره‌ی یک استاد (بدون نقل‌قول از پیام‌ها)."""
     professor = next(
         (p for p in store.professors if p.norm_name == normalize(name)), None
@@ -334,7 +339,7 @@ def professor_answer(store, name: str) -> str | None:
     warnings = [item for item in warnings if item not in strengths]
 
     notes: list[str] = []
-    if not strengths and not warnings and evidence:
+    if not strengths and not warnings and evidence and not course:
         notes.append("ارزیابی‌های موجود پراکنده است و جمع‌بندی روشن نمی‌دهد؛ "
                      "برای تصمیم بهتر نام درس را هم بپرس.")
     if not scores and not evidence:
@@ -352,25 +357,33 @@ def professor_answer(store, name: str) -> str | None:
         lines.append("")
         lines.extend(f"ℹ️ {item}" for item in notes)
 
-    courses = courses_for_professor(store, professor.name)
+    courses = courses_for_professor(store, professor.name, course_norm=course)
     if courses:
         lines.append("")
-        lines.append("📚 ارائه‌ی این ترم")
+        lines.append(f"📚 ارائه‌های این استاد در «{_cell(course)}»" if course
+                     else "📚 ارائه‌ی این ترم")
         lines.extend(courses)
 
     return "\n".join(lines)
 
 
-def courses_for_professor(store, name: str, limit: int = 6) -> list[str]:
-    """درس‌های این ترم یک استاد، با قالب خوانا و بدون تکرار نام خودش."""
+def courses_for_professor(store, name: str, limit: int = 6,
+                          course_norm: str = "") -> list[str]:
+    """درس‌های این ترم یک استاد؛ با course_norm فقط همان درس."""
     if store.courses is None:
         return []
     target = normalize(name)
     matches = []
     for _, row in store.courses.iterrows():
         professor = normalize(_cell(row.get("استاد")))
-        if professor == target or (professor and (target in professor or professor in target)):
-            matches.append(row)
+        if not (professor == target or
+                (professor and (target in professor or professor in target))):
+            continue
+        if course_norm:
+            row_course = normalize(_cell(row.get("نام درس")))
+            if row_course != course_norm and course_norm not in row_course:
+                continue
+        matches.append(row)
     lines: list[str] = []
     for row in matches[:limit]:
         schedule = format_schedule(row.get("زمان‌بندی تشکیل کلاس"))
@@ -452,6 +465,22 @@ def courses_answer(store, rows: list, query: str = "") -> str:
     return "\n".join(lines)
 
 
+def not_found_answer(store, query: str) -> str:
+    """وقتی چیزی در داده پیدا نشد: همان را صریح می‌گوید و راهنمایی می‌دهد."""
+    tried = _fa(re.sub(r"\s+", " ", query.strip()))[:60]
+    lines = [f"🎯 نتیجه: در داده‌ی این ترم چیزی برای «{tried}» پیدا نکردم."]
+    if store.courses is not None and len(store.courses):
+        lines.append(f"ℹ️ داده‌ی فعلی شامل {_fa(len(store.courses))} ردیف ارائه‌ی درس "
+                     f"و {_fa(len(store.professors))} شناسنامه‌ی استاد است؛ شاید نام "
+                     "درس یا استاد کمی متفاوت نوشته شده باشد.")
+    lines.append("")
+    lines.append("می‌توانی این‌طور بپرسی:")
+    lines.append("• استاد آذر ابوالقاسمی چطور است؟")
+    lines.append("• آیا درس بهینه سازی خطی برای ورودی ۱۴۰۴ مجاز است؟")
+    lines.append("• درس مبانی کارآفرینی چه زمانی ارائه شده؟")
+    return "\n".join(lines)
+
+
 def answer(store, query: str, want_model: bool = True) -> str | None:
     """پاسخ نهایی ربات برای یک پرسش، یا None اگر چیزی برای گفتن نبود."""
     info = store.eligibility_info(query)
@@ -465,7 +494,20 @@ def answer(store, query: str, want_model: bool = True) -> str | None:
     matches = store.match_professors(keywords)
     named = [professor.name for professor, is_named in matches if is_named]
     if named:
-        text = professor_answer(store, named[0])
+        # اگر نام درس هم در پرسش باشد، فقط ارائه‌های همان درس نمایش داده می‌شود
+        course_norm = ""
+        query_tokens = set(normalize(query).split())
+        best_overlap = 0
+        for row in store.match_courses(keywords):
+            candidate = normalize(_cell(row.get("نام درس")))
+            tokens = set(candidate.split())
+            if not tokens:
+                continue
+            overlap = len(tokens & query_tokens)
+            need = min(len(tokens), max(1, len(tokens) - 1))
+            if overlap >= need and overlap > best_overlap:
+                course_norm, best_overlap = candidate, overlap
+        text = professor_answer(store, named[0], course=course_norm)
         if text:
             return text
 
@@ -473,7 +515,7 @@ def answer(store, query: str, want_model: bool = True) -> str | None:
     if rows:
         return courses_answer(store, rows, query)
 
-    return None
+    return not_found_answer(store, query)
 
 
 # ---------------------------------------------------------------- پاکسازی مدل
