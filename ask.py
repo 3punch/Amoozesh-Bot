@@ -12,6 +12,7 @@ import argparse
 import json
 import sys
 
+import fallback
 import llm
 from prompts import build_messages
 from retrieval import DataStore, estimate_tokens
@@ -31,6 +32,7 @@ def main() -> int:
 
     result = {
         "question": question,
+        "facts": fallback.answer(store, question),
         "stats": stats,
         "prompt_tokens_estimate": estimate_tokens(messages[0]["content"]) + estimate_tokens(question),
         "context": context,
@@ -62,8 +64,11 @@ def main() -> int:
         print(f"⚖️ حکم قطعی: {stats['verdict']}")
     print("\n" + "=" * 60 + "\n📄 زمینه‌ی ارسالی به مدل:\n" + "=" * 60)
     print(context)
+    if result["facts"]:
+        print("\n" + "=" * 60 + "\n📋 پاسخ قطعی ربات (بدون مدل):\n" + "=" * 60)
+        print(result["facts"])
     if result["answer"]:
-        print("\n" + "=" * 60 + f"\n🤖 پاسخ {llm.MODEL_NAME}:\n" + "=" * 60)
+        print("\n" + "=" * 60 + f"\n🤖 جمع‌بندی {llm.MODEL_NAME}:\n" + "=" * 60)
         print(result["answer"])
     elif result["error"]:
         print(f"\n⚠️ مدل اجرا نشد: {result['error']}")

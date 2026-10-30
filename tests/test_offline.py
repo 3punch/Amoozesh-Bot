@@ -184,7 +184,8 @@ def test_prompts():
     check("نقش system و user درست است",
           [m["role"] for m in msgs] == ["system", "user"])
     check("زمینه در system جای‌گذاری شد", "زمینه تست" in msgs[0]["content"])
-    check("قواعد در پرامپت هست", "نتیجه: مجاز است" in SYSTEM_PROMPT)
+    check("قاعده‌ی ضدتوهم در پرامپت هست", "از خودت نساز" in SYSTEM_PROMPT)
+    check("محدودیت طول در پرامپت هست", "حداکثر ۳ خط" in SYSTEM_PROMPT)
     check("طول پرامپت پایه < ۱۵۰۰ کاراکتر", len(SYSTEM_PROMPT) < 1500)
 
     sys.argv = ["x"]
@@ -280,7 +281,7 @@ def test_end_to_end():
         assert messages[0]["role"] == "system"
         assert messages[-1]["content"] == "بهینه سازی خطی برای ورودی ۱۴۰۳ مجازه؟"
         assert "پاسخ قطعی" in messages[0]["content"]
-        return "نتیجه: مجاز است ✅"
+        return "این درس ویژه‌ی ورودی ۱۴۰۳ است و برای بقیه‌ی ورودی‌ها بسته است."
 
     llm.generate = fake_generate
 
@@ -289,8 +290,19 @@ def test_end_to_end():
     context = types.SimpleNamespace(bot=types.SimpleNamespace(id=1, username="amoozeshbot"))
 
     asyncio.run(bot.handle_message(update, context))
-    check("پاسخ ارسال شد", msg.answers == ["نتیجه: مجاز است ✅"], str(msg.sent))
+    reply = msg.answers[-1]
+    check("پاسخ ارسال شد", reply.startswith("نتیجه: مجاز است"), reply[:60])
+    check("داده‌ی قطعی اول پاسخ است", "این درس ویژه‌ی ورودی 1403 است" in reply)
+    check("جمع‌بندی مدل ضمیمه شد", "جمع‌بندی مدل" in reply and "ویژه‌ی ورودی ۱۴۰۳" in reply)
     check("پیام «در حال بررسی…» پاک شد", msg.placeholders[0].deleted == 1)
+
+    # مدلِ پرت‌وپلا ⇒ جمع‌بندی نمایش داده نمی‌شود، ولی داده‌ی قطعی می‌رسد
+    llm.generate = lambda *a, **kw: "نتیجه: مجاز است"
+    msg_junk = FakeMessage("استاد ایزدیخواه چطوره؟")
+    asyncio.run(bot.handle_message(types.SimpleNamespace(message=msg_junk), context))
+    junk_reply = msg_junk.answers[-1]
+    check("جواب بی‌ارزش مدل دور ریخته شد", "جمع‌بندی مدل" not in junk_reply, junk_reply[:80])
+    check("کارت قطعی استاد رسید", "ارائه‌ی این ترم" in junk_reply)
 
     # خطای مدل ⇒ پاسخ قطعی از خود دیتا (بدون تولید آزاد)
     msg2 = FakeMessage("استاد ایزدیخواه چطوره؟")

@@ -124,4 +124,22 @@ def answer(store, query: str, want_model: bool = True) -> str | None:
     return None
 
 
+def sanitize_model_text(text: str, allow_verdict: bool = False) -> str:
+    """خطوط پرخطر مدل را حذف می‌کند (حکمِ بی‌ربط، تکرار سوال، پرحرفی)."""
+    if not text:
+        return ""
+    drop_markers = () if allow_verdict else ("نتیجه: مجاز است", "نتیجه: مجاز نیست")
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # مدل روی سوال‌های غیرِ مجاز بودن هم «نتیجه» می‌سازد؛ این‌ها را نگه نمی‌داریم
+        if any(m in stripped for m in drop_markers):
+            continue
+        lines.append(stripped)
+    out = "\n".join(lines).strip()
+    return out[:900]
+
+
 OFFLINE_NOTE = "\n\n_(مدل محلی در دسترس نبود؛ این پاسخ مستقیم از داده‌های پروژه ساخته شد.)_"

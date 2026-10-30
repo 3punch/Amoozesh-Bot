@@ -86,6 +86,16 @@ async def send_long(message, text: str) -> None:
             await message.reply_text(chunk)
 
 
+def _looks_useful(text: str) -> bool:
+    """جمع‌بندی مدل ارزش نمایش دارد؟ (خالی، خیلی کوتاه یا فقط تکرار سوال نه)"""
+    clean = text.strip()
+    if len(clean) < 25:
+        return False
+    if "در اطلاعات موجود نیست" in clean and len(clean) < 70:
+        return False
+    return True
+
+
 def is_addressed_to_bot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """در گروه فقط وقتی جواب می‌دهیم که ریپلای به ربات یا منشن باشد."""
     msg = update.message
@@ -139,15 +149,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         model_failed = True
 
     answer = (answer or "").strip()
-    if not answer:
-        # مدل نبود/خطا داد/خالی جواب داد ⇒ پاسخ قطعی از خود دیتا (بدون تولید آزاد)
-        offline = fallback.answer(STORE, user_text)
-        if offline:
-            log.info("پاسخ قطعی (بدون مدل) ارسال شد.")
-            answer = offline + fallback.OFFLINE_NOTE
+    answer = fallback.sanitize_model_text(answer, allow_verdict=bool(stats.get("verdict")))
+
+    # پاسخ نهایی = اطلاعات قطعی از دیتا + جمع‌بندی زبانی مدل (اگر ارزش داشت)
+    facts = fallback.answer(STORE, user_text)
+    useful = bool(answer) and _looks_useful(answer)
+    if facts:
+        if useful:
+            final = f"{facts}\n\n🤖 جمع‌بندی مدل:\n{answer}"
         else:
-            log.error("مدل پاسخ نداد و پاسخی از دیتا هم ساخته نشد.")
-            answer = FALLBACK_MESSAGE
+            final = facts + (fallback.OFFLINE_NOTE if model_failed else "")
+        log.info("پاسخ قطعی ارسال شد (جمع‌بندی مدل: %s).", useful)
+    elif answer:
+        final = answer
+    else:
+        log.error("نه مدل پاسخ داد و نه پاسخی از دیتا ساخته شد.")
+        final = FALLBACK_MESSAGE
+    answer = final
     try:
         await placeholder.delete()
     except TelegramError:
