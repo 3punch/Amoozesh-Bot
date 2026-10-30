@@ -139,6 +139,7 @@ TIME_RE = re.compile(r"\d{1,2}:\d{2}")
 YEAR_RE = re.compile(r"\b(1[34]\d{2})\b")
 SCORE_RE = re.compile(r"(\d{1,2}(?:\.\d)?)\s*(?:از|/)\s*10\b")
 BIG_NUM_RE = re.compile(r"\b\d{3,}\b")
+LATIN_RE = re.compile(r"[A-Za-z]{2,}")
 
 
 def _ascii(text: str) -> str:
@@ -181,6 +182,12 @@ def verify_analysis_text(text: str, context: str) -> tuple[bool, str]:
             re.search(rf"(?<![\d.]){re.escape(v)}(?![\d])", ctx) for v in variants
         ):
             return False, f"امتیاز ساختگی: {score}"
+
+    # خروجی مدل باید فارسی باشد؛ حروف لاتین نشانه‌ی متن مخدوش است
+    # (در اجرای واقعی «آذرaboالقاسمی» تولید شد).
+    latin = LATIN_RE.findall(text)
+    if latin:
+        return False, f"خروجی غیرفارسی/مخدوش: {', '.join(latin[:3])}"
 
     fake_big = [n for n in BIG_NUM_RE.findall(out) if n not in ctx]
     if fake_big:

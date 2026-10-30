@@ -516,6 +516,11 @@ def test_deep_mode():
 
     check("تحلیل خالی رد شد", deep.verify_analysis_text("  ", ctx)[0] is False)
 
+    # در اجرای واقعی مدل «آذرaboالقاسمی» تولید کرد ⇒ خروجی مخدوش پذیرفته نشود
+    mixed_script, why = deep.verify_analysis_text(
+        "استاد آذرaboالقاسمی خوب استادی هست و نمره‌دهی دست بازی دارد.", ctx)
+    check("خروجی مخدوش (لاتین وسط فارسی) رد شد", not mixed_script and "abo" in why, why)
+
     # --- اجرا با مدل جعلی
     original = llm.generate
     try:
@@ -614,6 +619,8 @@ def test_deep_end_to_end():
         check("تحلیل مدل جایگزین شد", "🧠 تحلیل مدل" in cq.edits[-1], cq.edits[-1][:60])
         check("خروجی، فهم مدل است نه فهرست داده", "کم‌ریسک‌تری" in cq.edits[-1])
         check("داده‌ی پایه برای شفافیت ضمیمه شد", "📊 داده‌ی پایه" in cq.edits[-1])
+        check("حکم محاسبه‌شده از داده هم زیر تحلیل مدل می‌آید",
+              "🎯 حکم داده (بدون مدل)" in cq.edits[-1], cq.edits[-1][-160:])
 
         # ۳) ضربه‌ی دوم روی همان دکمه ⇒ منقضی، نه تحلیل دوباره
         cq2 = FakeCallbackQuery(button.callback_data)

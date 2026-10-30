@@ -59,7 +59,7 @@ DEEP_ENABLED = os.getenv("DEEP_MODE", "1") == "1"
 # آیا مدل واقعاً در دسترس است؟ (در on_startup بررسی می‌شود)
 MODEL_READY = False
 
-DEEP_BUTTON = "🧠 تحلیل با مدل (۲ تا ۴ دقیقه)"
+DEEP_BUTTON = "🧠 تحلیل با مدل (۳ تا ۶ دقیقه)"
 PENDING_TTL = 30 * 60          # دکمه‌ی هر پاسخ نیم ساعت معتبر است
 PENDING_MAX = 400              # سقف دکمه‌های فعال (جلوگیری از رشد حافظه)
 PENDING: dict[str, dict] = {}  # توکن کوتاه ⇒ {query, user, ts}
@@ -188,6 +188,14 @@ def base_summary(store, query: str) -> str:
     return " · ".join(parts)
 
 
+def data_verdict(facts: str) -> str:
+    """خط «🎯 نتیجه/حکم» پاسخ قطعی، برای نمایش کنار تحلیل مدل."""
+    for line in (facts or "").splitlines():
+        if line.startswith("🎯"):
+            return line.strip().lstrip("🎯").strip()
+    return ""
+
+
 def compose_deep_text(store, query: str, result: dict) -> str:
     """متن نهایی پیام حالت مدل: تحلیل مدل یا شفاف‌سازی شکست + پاسخ قطعی."""
     facts = fallback.answer(store, query) or ""
@@ -199,6 +207,10 @@ def compose_deep_text(store, query: str, result: dict) -> str:
         if summary:
             lines.append("")
             lines.append(f"📊 داده‌ی پایه: {summary}")
+        verdict = data_verdict(facts)
+        if verdict:
+            # مدل ممکن است اشتباه قضاوت کند؛ حکم محاسبه‌شده از داده همیشه دیده شود
+            lines.append(f"🎯 حکم داده (بدون مدل): {verdict}")
         return "\n".join(lines)
 
     # شکست: صادقانه بگو چرا، و همان پاسخ معتبر داده را نگه دار
@@ -267,7 +279,7 @@ async def deep_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await _edit_or_split(
         query,
         f"🧠 در حال تحلیل متن کامل با مدل «{llm.MODEL_NAME}»…\n"
-        "این کار روی CPU بین ۲ تا ۴ دقیقه طول می‌کشد. لازم نیست کاری کنی؛ "
+        "این کار روی CPU بین ۳ تا ۶ دقیقه طول می‌کشد. لازم نیست کاری کنی؛ "
         "نتیجه همین‌جا جایگزین می‌شود.",
     )
     text = await run_deep(STORE, entry["query"])
@@ -295,7 +307,7 @@ async def deep_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     placeholder = await update.message.reply_text(
-        f"🧠 در حال تحلیل متن کامل با مدل «{llm.MODEL_NAME}»… (۲ تا ۴ دقیقه)"
+        f"🧠 در حال تحلیل متن کامل با مدل «{llm.MODEL_NAME}»… (۳ تا ۶ دقیقه)"
     )
     text = await run_deep(STORE, question)
     chunks = split_message(text) or [FALLBACK_MESSAGE]
