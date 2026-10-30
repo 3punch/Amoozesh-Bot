@@ -40,6 +40,8 @@ def main() -> int:
         "error": None,
     }
 
+    result["verified"] = None
+
     if not args.context:
         if not llm.wait_for_server(timeout=20):
             result["error"] = f"سرویس Ollama روی {llm.OLLAMA_HOST} بالا نیست."
@@ -47,7 +49,16 @@ def main() -> int:
             result["error"] = f"مدل «{llm.MODEL_NAME}» نصب نیست (ollama pull {llm.MODEL_NAME})."
         else:
             try:
-                result["answer"] = llm.generate(messages)
+                raw = llm.generate(messages)
+                text = fallback.sanitize_model_text(
+                    raw, allow_verdict=bool(stats.get("verdict"))
+                )
+                ok, why = fallback.verify_model_text(text, context)
+                result["verified"] = ok
+                result["verify_reason"] = why
+                result["answer"] = text if ok else None
+                if not ok:
+                    result["rejected_model_text"] = text
             except llm.LLMError as exc:
                 result["error"] = str(exc)
 
@@ -68,8 +79,12 @@ def main() -> int:
         print("\n" + "=" * 60 + "\n📋 پاسخ قطعی ربات (بدون مدل):\n" + "=" * 60)
         print(result["facts"])
     if result["answer"]:
-        print("\n" + "=" * 60 + f"\n🤖 جمع‌بندی {llm.MODEL_NAME}:\n" + "=" * 60)
+        print("\n" + "=" * 60 + f"\n🤖 جمع‌بندی {llm.MODEL_NAME} (تأییدشده):\n" + "=" * 60)
         print(result["answer"])
+    elif result.get("rejected_model_text"):
+        print("\n" + "=" * 60 + "\n🚫 جمع‌بندی مدل رد شد:\n" + "=" * 60)
+        print(f"دلیل: {result.get('verify_reason')}")
+        print(result["rejected_model_text"])
     elif result["error"]:
         print(f"\n⚠️ مدل اجرا نشد: {result['error']}")
     return 0 if result["answer"] or args.context else 1

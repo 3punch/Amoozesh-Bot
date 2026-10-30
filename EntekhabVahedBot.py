@@ -42,6 +42,8 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 MAX_MESSAGE_LEN = 4000
 # چند دقیقه ربات بماند؛ صفر = اجرا تا وقتی متوقف شود (مفید برای اجرای دستی/محلی)
 RUN_DURATION_MINUTES = float(os.getenv("RUN_DURATION_MINUTES", "0") or 0)
+# آیا جمع‌بندی زبانی مدل به پاسخ قطعی ضمیمه شود؟ (۱ = بله)
+MODEL_SUMMARY = os.getenv("MODEL_SUMMARY", "1") == "1"
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -153,7 +155,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # پاسخ نهایی = اطلاعات قطعی از دیتا + جمع‌بندی زبانی مدل (اگر ارزش داشت)
     facts = fallback.answer(STORE, user_text)
-    useful = bool(answer) and _looks_useful(answer)
+    useful = MODEL_SUMMARY and bool(answer) and _looks_useful(answer)
+    if useful:
+        ok, why = fallback.verify_model_text(answer, context_text)
+        if not ok:
+            log.warning("جمع‌بندی مدل رد شد (%s) — فقط داده‌ی قطعی ارسال می‌شود.", why)
+            useful = False
     if facts:
         if useful:
             final = f"{facts}\n\n🤖 جمع‌بندی مدل:\n{answer}"

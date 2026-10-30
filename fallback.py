@@ -142,4 +142,52 @@ def sanitize_model_text(text: str, allow_verdict: bool = False) -> str:
     return out[:900]
 
 
+TIME_RE = re.compile(r"\d{1,2}:\d{2}")
+NUM_RE = re.compile(r"\d+")
+TO_ASCII = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+
+
+def verify_model_text(text: str, context: str) -> tuple[bool, str]:
+    """
+    آیا جمع‌بندی مدل با «اطلاعات» سازگار است؟
+
+    همه‌ی ساعت‌ها و اعدادی که مدل می‌نویسد باید عیناً در زمینه باشند؛
+    در غیر این صورت متن دور ریخته می‌شود (مدل ۴B ساعت و ظرفیت از خودش می‌سازد).
+    """
+    if not text.strip():
+        return False, "خالی"
+    if "اطلاعات موجود نیست" in text:
+        return False, "مدل گفت اطلاعاتی نیست (متناقض با داده)"
+
+    def norm(value: str) -> str:
+        # ارقام فارسی/عربی → ASCII تا مقایسه‌ی عددی ممکن باشد
+        # (خطوط جدید حفظ می‌شوند تا بررسی «ساعت‌های یک خط» معنا داشته باشد)
+        value = re.sub(r"[ \t\u200c]+", " ", value.translate(TO_ASCII))
+        return value
+
+    ctx = norm(context)
+    ctx_times = set(TIME_RE.findall(ctx))
+    ctx_nums = set(NUM_RE.findall(ctx))
+    ctx_lines = [l for l in ctx.splitlines() if l.strip()]
+
+    out = norm(text)
+
+    # ۱) ساعتی که اصلاً در زمینه نیست
+    made_up = [t for t in TIME_RE.findall(out) if t not in ctx_times]
+    if made_up:
+        return False, f"ساعت ساختگی: {', '.join(made_up[:3])}"
+
+    # ۲) ترکیب اشتباه ساعت‌ها: همه‌ی ساعت‌های یک خط مدل باید در یک خط زمینه باشند
+    for line in out.splitlines():
+        times = TIME_RE.findall(line)
+        if len(times) >= 2 and not any(all(t in l for t in times) for l in ctx_lines):
+            return False, f"ترکیب ساعت اشتباه: {' و '.join(times[:3])}"
+
+    # ۳) عددی که در زمینه نیست (ظرفیت، کد درس، امتیاز و…)
+    novel = sorted({n for n in NUM_RE.findall(out) if n not in ctx_nums}, key=len, reverse=True)
+    if novel:
+        return False, f"عدد ساختگی: {', '.join(novel[:3])}"
+    return True, "ok"
+
+
 OFFLINE_NOTE = "\n\n_(مدل محلی در دسترس نبود؛ این پاسخ مستقیم از داده‌های پروژه ساخته شد.)_"

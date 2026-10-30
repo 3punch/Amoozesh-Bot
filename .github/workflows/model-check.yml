@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      MODEL_NAME: ${{ inputs.model || 'gemma3:4b' }}
+      MODEL_NAME: ${{ inputs.model || 'gemma3:12b' }}
       OLLAMA_HOST: http://127.0.0.1:11434
 
     steps:

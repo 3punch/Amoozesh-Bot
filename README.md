@@ -102,6 +102,7 @@ python tests/test_offline.py                            # تست آفلاین
 | `BOT_RUN_MINUTES` | `320` | مدت کار هر نمونه در Actions |
 | `BOT_JOB_MINUTES` | `335` | کل عمر job (باید < ۳۶۰ باشد) |
 | `CHECK_UPDATES` | `1` | خروج خودکار وقتی روی main کامیت جدید آمد |
+| `MODEL_SUMMARY` | `1` | ضمیمه‌کردن جمع‌بندی مدل به پاسخ قطعی (`0` = فقط داده) |
 
 ---
 

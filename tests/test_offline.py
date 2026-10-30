@@ -222,6 +222,33 @@ def test_fallback():
 
     check("سوال بی‌ربط ⇒ None", fallback.answer(store, "سلام") is None)
 
+    # --- نگهبان ضدتوهم با خروجی واقعی gemma3:4b (تست رگرسیون)
+    ctx_time, _ = store.build_context(
+        "ساختمان داده و الگوریتم ها برای ورودی ۱۴۰۴ با همامی چه زمانی ارائه شده؟"
+    )
+    ok, why = fallback.verify_model_text("همامی: یکشنبه ۱۷:۴۰ تا ۱۹:۲۰", ctx_time)
+    check("ساعت ساختگی گرفته شد", not ok and "17:40" in why, why)
+    ok, why = fallback.verify_model_text("سه شنبه ۱۰:۳۰ تا ۱۲:۱۵", ctx_time)
+    check("ساعت ناموجود گرفته شد", not ok and "12:15" in why, why)
+    ok, _ = fallback.verify_model_text("یکشنبه از 14:20 تا 17:40", ctx_time)
+    check("ساعت درست رد نشد", ok)
+
+    ctx_prof, _ = store.build_context("استاد آذر ابوالقاسمی چطور استادی هستن")
+    ok, why = fallback.verify_model_text("این مورد در اطلاعات موجود نیست.", ctx_prof)
+    check("ادعای «اطلاعاتی نیست» رد شد", not ok, why)
+    ok, why = fallback.verify_model_text("ظرفیت کلاس ۱۲۰ نفر است.", ctx_prof)
+    check("عدد ساختگی گرفته شد", not ok and "120" in why, why)
+    ok, _ = fallback.verify_model_text(
+        "استاد خوبی است؛ نمره‌دهی با ارفاق و حضور و غیاب مهم است.", ctx_prof
+    )
+    check("خلاصه‌ی درست رد نشد", ok)
+
+    # پاکسازی خروجی مدل
+    check("حکم بی‌ربط مدل حذف شد",
+          "نتیجه" not in fallback.sanitize_model_text("نتیجه: مجاز است"))
+    check("حکم مرتبط مدل حفظ شد",
+          "نتیجه" in fallback.sanitize_model_text("نتیجه: مجاز است", allow_verdict=True))
+
 
 # ---------------------------------------------------------------- 4) end-to-end
 
