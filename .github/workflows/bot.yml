@@ -27,12 +27,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 350          # سقف Actions برای هر job = ۳۶۰ دقیقه
     env:
-      MODEL_NAME: gemma3:4b
+      # ۱۲B کیفیت فارسی و دقت خیلی بهتری دارد (تست واقعی در reports/)؛
+      # برای سرعت بیشتر می‌توانی gemma3:4b بگذاری.
+      MODEL_NAME: gemma3:12b
       OLLAMA_HOST: http://127.0.0.1:11434
       OLLAMA_KEEP_ALIVE: 6h
       OLLAMA_NUM_PARALLEL: "1"
-      NUM_CTX: "8192"
-      MAX_CONTEXT_CHARS: "9000"
+      NUM_CTX: "4096"
+      MAX_TOKENS: "160"
+      MAX_CONTEXT_CHARS: "6000"
       BOT_RUN_MINUTES: "320"      # هر نمونه ۵ ساعت و ۲۰ دقیقه
       BOT_JOB_MINUTES: "335"      # کل job حداکثر ۵ ساعت و ۳۵ دقیقه
 
