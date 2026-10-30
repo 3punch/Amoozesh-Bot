@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      MODEL_NAME: ${{ inputs.model }}
+      MODEL_NAME: ${{ inputs.model || 'gemma3:4b' }}
       OLLAMA_HOST: http://127.0.0.1:11434
 
     steps:
@@ -62,17 +62,21 @@ jobs:
 
       - name: Install and start Ollama
         run: |
-          curl -fsSL https://ollama.com/install.sh | sh
+          set -euo pipefail
+          : "${MODEL_NAME:?MODEL_NAME خالی است}"
+          echo "مدل: $MODEL_NAME"
+          curl -fsSL --retry 3 https://ollama.com/install.sh | sh
           nohup ollama serve > /tmp/ollama.log 2>&1 &
           for i in $(seq 1 60); do
             curl -fsS "$OLLAMA_HOST/api/tags" > /dev/null && break
             sleep 2
           done
           ollama pull "$MODEL_NAME"
+          ollama list
 
       - name: Ask the model
         env:
-          QUESTION: ${{ inputs.question }}
+          QUESTION: ${{ inputs.question || '' }}
         run: |
           set -e
           if [ -z "${QUESTION// }" ]; then
