@@ -1,0 +1,142 @@
+name: Test Model Quality
+
+# تست کیفیت مدل بدون تلگرام.
+# Actions → Test Model Quality → Run workflow
+# در کادر «question» هر سوالی می‌توانی بنویسی و پاسخ واقعی gemma3:4b را
+# همراه با زمینه‌ای که به مدل رسیده، در لاگ همین job می‌بینی.
+
+on:
+  # با هر تغییر در داده‌ها یا پرامپت، یک بار کیفیت مدل تست می‌شود
+  push:
+    paths:
+      - 'ask.py'
+      - 'retrieval.py'
+      - 'prompts.py'
+      - 'llm.py'
+      - 'fallback.py'
+      - 'professors.txt'
+      - 'courses.xlsx'
+      - 'knowledge_base.txt'
+      - '.github/workflows/model-check.yml'
+  workflow_dispatch:
+    inputs:
+      question:
+        description: 'سوال برای مدل (خالی = سه سوال نمونه)'
+        required: false
+        default: ''
+      model:
+        description: 'نام مدل در Ollama'
+        required: false
+        default: 'gemma3:4b'
+
+permissions:
+  contents: write   # برای ذخیره‌ی گزارش در مخزن
+
+jobs:
+  ask:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      MODEL_NAME: ${{ inputs.model || 'gemma3:12b' }}
+      OLLAMA_HOST: http://127.0.0.1:11434
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: pip
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-models-${{ env.MODEL_NAME }}-v2
+          restore-keys: ollama-models-
+
+      - name: Install and start Ollama
+        run: |
+          set -euo pipefail
+          : "${MODEL_NAME:?MODEL_NAME خالی است}"
+          echo "مدل: $MODEL_NAME"
+          curl -fsSL --retry 3 https://ollama.com/install.sh | sh
+          nohup ollama serve > /tmp/ollama.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -fsS "$OLLAMA_HOST/api/tags" > /dev/null && break
+            sleep 2
+          done
+          ollama pull "$MODEL_NAME"
+          ollama list
+
+      - name: Ask the model
+        env:
+          QUESTION: ${{ inputs.question || '' }}
+        run: |
+          set -u
+          mkdir -p reports
+          report=reports/model-report.md
+          {
+            echo "# گزارش کیفیت مدل"
+            echo
+            echo "- مدل: \`$MODEL_NAME\`"
+            echo "- زمان: $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo "- کامیت: \`${GITHUB_SHA:0:7}\`"
+            echo
+          } > "$report"
+
+          if [ -z "${QUESTION// }" ]; then
+            questions=(
+              "استاد آذر ابوالقاسمی چطور استادی هستن"
+              "بهینه سازی خطی برای ورودی ۱۴۰۴ مجازه؟"
+              "استاد ایزدیخواه چطوره؟"
+              "ساختمان داده و الگوریتم ها برای ورودی ۱۴۰۴ با همامی چه زمانی ارائه شده؟"
+            )
+          else
+            questions=("$QUESTION")
+          fi
+
+          for q in "${questions[@]}"; do
+            echo "## پرسش: $q" >> "$report"
+            echo '```' >> "$report"
+            python ask.py "$q" >> "$report" 2>&1 || echo "(خطا در اجرا)" >> "$report"
+            echo '```' >> "$report"
+            echo >> "$report"
+          done
+
+          # نسخه‌ی خلاصه‌ی پاسخ‌ها هم برای مرور سریع
+          {
+            echo
+            echo "## فقط پاسخ مدل"
+            echo
+          } >> "$report"
+          for q in "${questions[@]}"; do
+            echo "**$q**" >> "$report"
+            echo >> "$report"
+            python ask.py --json "$q" 2>/dev/null \
+              | python -c "import json,sys; d=json.load(sys.stdin); print((d.get('answer') or d.get('error') or '—'))" \
+              >> "$report" || echo "—" >> "$report"
+            echo >> "$report"
+          done
+          cat "$report"
+
+      - name: Commit report
+        run: |
+          git config user.name "model-check-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -f reports/model-report.md
+          if git diff --cached --quiet; then
+            echo "گزارش تغییری نداشت."
+          else
+            git commit -m "chore: model quality report [skip ci]"
+            git push
+          fi
+
+      - name: Show Ollama log
+        if: always()
+        run: tail -30 /tmp/ollama.log || true

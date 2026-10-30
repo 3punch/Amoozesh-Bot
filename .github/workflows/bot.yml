@@ -1,32 +1,111 @@
 name: Run Telegram Bot 24/7
 
+# ربات کاملاً داخل GitHub Actions اجرا می‌شود:
+#   نصب Ollama → مدل Gemma → اجرای ربات → چرخش خودکار قبل از سقف ۶ ساعته
+# هیچ چیزی لازم نیست روی سیستم خودت اجرا شود.
+#
+# cron هر ۵ ساعت یک run در صف می‌گذارد؛ با concurrency (بدون cancel) همیشه
+# دقیقاً یک نمونه در حال اجراست و نمونه‌ی بعدی بلافاصله جایش را می‌گیرد.
+
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 */5 * * *'
   workflow_dispatch:
+
+# فقط یک نمونه هم‌زمان؛ نمونه‌ی بعدی در صف می‌ماند (بدون قطع‌شدن نمونه‌ی فعال)
+concurrency:
+  group: telegram-bot
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 350          # سقف Actions برای هر job = ۳۶۰ دقیقه
+    env:
+      MODEL_NAME: gemma3:4b
+      OLLAMA_HOST: http://127.0.0.1:11434
+      OLLAMA_KEEP_ALIVE: 6h
+      OLLAMA_NUM_PARALLEL: "1"
+      NUM_CTX: "8192"
+      MAX_CONTEXT_CHARS: "9000"
+      BOT_RUN_MINUTES: "320"      # هر نمونه ۵ ساعت و ۲۰ دقیقه
+      BOT_JOB_MINUTES: "335"      # کل job حداکثر ۵ ساعت و ۳۵ دقیقه
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: pip
 
-    - name: Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: Run Telegram Bot
-      env:
-        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      run: python EntekhabVahedBot.py
+      # وزن‌های مدل کش می‌شوند تا هر بار ۳.۳ گیگ دانلود نشود
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-models-${{ env.MODEL_NAME }}-v2
+          restore-keys: |
+            ollama-models-
+
+      - name: Install Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama --version
+
+      - name: Start Ollama server
+        run: |
+          mkdir -p ~/.ollama
+          nohup ollama serve > /tmp/ollama.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS "$OLLAMA_HOST/api/tags" > /dev/null; then
+              echo "Ollama is up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "Ollama did not start"; tail -50 /tmp/ollama.log; exit 1
+
+      - name: Pull model
+        run: |
+          ollama pull "$MODEL_NAME"
+          ollama list
+
+      - name: Warm up model
+        run: |
+          curl -fsS "$OLLAMA_HOST/api/generate" \
+            -d "{\"model\":\"$MODEL_NAME\",\"prompt\":\"سلام\",\"stream\":false,\"options\":{\"num_predict\":8}}" \
+            > /dev/null && echo "مدل در حافظه بارگذاری شد."
+
+      - name: Run tests
+        run: python tests/test_offline.py
+
+      - name: Check token secret
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+            echo "::error::Secret با نام TELEGRAM_BOT_TOKEN تنظیم نشده است."
+            exit 1
+          fi
+
+      - name: Run Telegram Bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHECK_UPDATES: "1"
+        run: bash scripts/run_bot.sh
+
+      - name: Show Ollama log
+        if: always()
+        run: tail -50 /tmp/ollama.log || true
