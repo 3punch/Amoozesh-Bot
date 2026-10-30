@@ -226,7 +226,12 @@ def test_fallback():
     card = fallback.answer(store, "استاد آذر ابوالقاسمی چطور استادی هستن")
     check("کارت استاد ساخته شد", card and "آذر ابوالقاسمی" in card)
     check("نمره‌دهی از فرم استخراج شد", "ارفاق" in card, card[:80])
-    check("امتیازهای فرم استخراج شد", "۱۰/۱۰" in card)
+    check("امتیازهای فرم استخراج شد", "۹.۶ از ۱۰" in card, card[:200])
+    check("نتیجه‌گیری ربات اول پاسخ است", card.startswith("👤") and "🎯 نتیجه:" in card)
+    # هیچ پیام آرشیو نباید عیناً در پاسخ کپی شود (پاسخ باید «نتیجه» باشد)
+    prof = next(x for x in store.professors if "ابوالقاسمی" in x.norm_name)
+    copied = [c[:60] for c in prof.comments if len(c) > 60 and c[:60] in card]
+    check("هیچ پیام آرشیو عیناً کپی نشده", not copied, str(copied[:1]))
     check("درس این ترم اضافه شد", "مبانی کارآفرینی" in card)
 
     course = fallback.answer(store, "ساختمان داده و الگوریتم ها")
@@ -356,8 +361,9 @@ def test_end_to_end():
 
     asyncio.run(bot.handle_message(update, context))
     reply = msg.answers[-1]
-    check("پاسخ ارسال شد", reply.startswith("نتیجه: مجاز است"), reply[:60])
-    check("داده‌ی قطعی اول پاسخ است", "این درس ویژه‌ی ورودی 1403 است" in reply)
+    check("پاسخ با نتیجه‌ی ربات شروع می‌شود", reply.startswith("🎯 نتیجه:"), reply[:60])
+    check("حکم درست است", "مجاز است ✅" in reply, reply[:80])
+    check("دلیل از داده آمده", "ویژه‌ی ورودی 1403" in reply, reply[:120])
     check("جمع‌بندی مدل ضمیمه شد", "جمع‌بندی مدل" in reply and "ویژه‌ی ورودی ۱۴۰۳" in reply)
     check("پیام «در حال بررسی…» پاک شد", msg.placeholders[0].deleted == 1)
 
