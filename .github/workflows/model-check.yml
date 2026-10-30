@@ -30,7 +30,7 @@ on:
         default: 'gemma3:4b'
 
 permissions:
-  contents: read
+  contents: write   # برای ذخیره‌ی گزارش در مخزن
 
 jobs:
   ask:
@@ -78,7 +78,18 @@ jobs:
         env:
           QUESTION: ${{ inputs.question || '' }}
         run: |
-          set -e
+          set -u
+          mkdir -p reports
+          report=reports/model-report.md
+          {
+            echo "# گزارش کیفیت مدل"
+            echo
+            echo "- مدل: \`$MODEL_NAME\`"
+            echo "- زمان: $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo "- کامیت: \`${GITHUB_SHA:0:7}\`"
+            echo
+          } > "$report"
+
           if [ -z "${QUESTION// }" ]; then
             questions=(
               "استاد آذر ابوالقاسمی چطور استادی هستن"
@@ -89,11 +100,42 @@ jobs:
           else
             questions=("$QUESTION")
           fi
+
           for q in "${questions[@]}"; do
-            echo "================================================================"
-            python ask.py "$q" || true
-            echo
+            echo "## پرسش: $q" >> "$report"
+            echo '```' >> "$report"
+            python ask.py "$q" >> "$report" 2>&1 || echo "(خطا در اجرا)" >> "$report"
+            echo '```' >> "$report"
+            echo >> "$report"
           done
+
+          # نسخه‌ی خلاصه‌ی پاسخ‌ها هم برای مرور سریع
+          {
+            echo
+            echo "## فقط پاسخ مدل"
+            echo
+          } >> "$report"
+          for q in "${questions[@]}"; do
+            echo "**$q**" >> "$report"
+            echo >> "$report"
+            python ask.py --json "$q" 2>/dev/null \
+              | python -c "import json,sys; d=json.load(sys.stdin); print((d.get('answer') or d.get('error') or '—'))" \
+              >> "$report" || echo "—" >> "$report"
+            echo >> "$report"
+          done
+          cat "$report"
+
+      - name: Commit report
+        run: |
+          git config user.name "model-check-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add reports/model-report.md
+          if git diff --cached --quiet; then
+            echo "گزارش تغییری نداشت."
+          else
+            git commit -m "chore: model quality report [skip ci]"
+            git push
+          fi
 
       - name: Show Ollama log
         if: always()
