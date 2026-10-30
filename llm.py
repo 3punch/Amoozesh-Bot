@@ -5,7 +5,7 @@
 (پیش‌فرض http://127.0.0.1:11434) صدا زده می‌شود. هیچ API key ای لازم نیست.
 
 متغیرهای محیطی:
-    MODEL_NAME     نام مدل در Ollama            (پیش‌فرض: qwen3:4b)
+    MODEL_NAME     نام مدل در Ollama            (پیش‌فرض: qwen2.5:7b)
     THINK          حالت استدلال مدل‌های Qwen3    (۰ = خاموش، پیش‌فرض)
     OLLAMA_HOST    آدرس سرویس Ollama            (پیش‌فرض: http://127.0.0.1:11434)
     NUM_CTX        اندازه پنجره‌ی زمینه          (پیش‌فرض: 8192)
@@ -22,10 +22,15 @@ import time
 
 import requests
 
-MODEL_NAME = os.getenv("MODEL_NAME", "qwen3:4b")
+MODEL_NAME = os.getenv("MODEL_NAME", "qwen2.5:7b")
 # مدل‌های Qwen3 به‌طور پیش‌فرض «فکر کردن» طولانی دارند که برای پاسخ کوتاه
 # فارسی فقط تأخیر تولید می‌کند؛ خاموشش می‌کنیم.
 THINK = os.getenv("THINK", "0") == "1"
+
+
+def is_thinking_model(name: str | None = None) -> bool:
+    """مدل‌های Qwen3 در حالت خاموش هم نیاز به «/no_think» دارند."""
+    return (name or MODEL_NAME).lower().startswith("qwen3")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 NUM_CTX = int(os.getenv("NUM_CTX", "8192"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "320"))

@@ -30,14 +30,14 @@ on:
         default: 'gemma3:4b'
 
 permissions:
-  contents: write   # برای ذخیره‌ی گزارش در مخزن
+  contents: read
 
 jobs:
   ask:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      MODEL_NAME: ${{ inputs.model || 'gemma3:12b' }}
+      MODEL_NAME: ${{ inputs.model || 'qwen2.5:7b' }}
       OLLAMA_HOST: http://127.0.0.1:11434
 
     steps:
@@ -125,17 +125,14 @@ jobs:
           done
           cat "$report"
 
-      - name: Commit report
-        run: |
-          git config user.name "model-check-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add -f reports/model-report.md
-          if git diff --cached --quiet; then
-            echo "گزارش تغییری نداشت."
-          else
-            git commit -m "chore: model quality report [skip ci]"
-            git push
-          fi
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-quality-report
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Show Ollama log
         if: always()

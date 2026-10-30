@@ -188,6 +188,18 @@ def test_prompts():
     check("محدودیت طول در پرامپت هست", "حداکثر ۳ خط" in SYSTEM_PROMPT)
     check("طول پرامپت پایه < ۱۵۰۰ کاراکتر", len(SYSTEM_PROMPT) < 1500)
 
+    import llm as _llm
+    old_model, old_think = _llm.MODEL_NAME, _llm.THINK
+    try:
+        _llm.MODEL_NAME, _llm.THINK = "qwen3:4b", False
+        check("برای Qwen3، no_think تزریق می‌شود",
+              build_messages("سوال", "زمینه")[1]["content"].endswith("/no_think"))
+        _llm.MODEL_NAME = "qwen2.5:7b"
+        check("برای Qwen2.5، no_think تزریق نمی‌شود",
+              "/no_think" not in build_messages("سوال", "زمینه")[1]["content"])
+    finally:
+        _llm.MODEL_NAME, _llm.THINK = old_model, old_think
+
     sys.argv = ["x"]
     import EntekhabVahedBot as bot
 
@@ -302,6 +314,32 @@ def test_end_to_end():
 
     import EntekhabVahedBot as bot
     import llm
+
+    # --- حالت پیش‌فرض: بدون مدل، پاسخ فوری از داده
+    bot.MODEL_SUMMARY = False
+    called = {"n": 0}
+
+    def spy(*a, **kw):
+        called["n"] += 1
+        return "نباید صدا زده شود"
+
+    llm.generate = spy
+    ctx_fast = types.SimpleNamespace(bot=types.SimpleNamespace(id=1, username="b"))
+
+    msg_fast = FakeMessage("استاد آذر ابوالقاسمی چطور استادی هستن")
+    asyncio.run(bot.handle_message(types.SimpleNamespace(message=msg_fast), ctx_fast))
+    check("پیش‌فرض: مدل صدا زده نشد", called["n"] == 0, str(called))
+    check("پیش‌فرض: پاسخ قطعی فوری رسید",
+          "ارفاق" in msg_fast.answers[-1] and "جمع‌بندی مدل" not in msg_fast.answers[-1])
+
+    msg_unknown = FakeMessage("سیب زمینی چند؟")
+    asyncio.run(bot.handle_message(types.SimpleNamespace(message=msg_unknown), ctx_fast))
+    check("پیش‌فرض: سوال بی‌ربط راهنما گرفت (بدون معطلی مدل)",
+          "دستیار انتخاب واحد" in msg_unknown.answers[-1], msg_unknown.answers[-1][:60])
+    check("پیش‌فرض: مدل حتی برای سوال بی‌ربط صدا زده نشد", called["n"] == 0, str(called))
+
+    # --- حالت با مدل
+    bot.MODEL_SUMMARY = True
 
     def fake_generate(messages, **kw):
         fake_generate.last = messages

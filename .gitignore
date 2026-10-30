@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .ollama/
 .env
+reports/
+bench-results.json

@@ -17,7 +17,7 @@ on:
       - '.github/workflows/bench.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   bench:
@@ -70,20 +70,14 @@ jobs:
           IFS=',' read -ra list <<< "$MODELS"
           python bench.py --models "${list[@]}" --report reports/model-bench.md
 
-      - name: Commit report
-        run: |
-          git config user.name "bench-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add -f reports/model-bench.md
-          if git diff --cached --quiet; then
-            echo "گزارش تغییری نداشت."
-          else
-            git commit -m "chore: model benchmark report [skip ci]"
-            for i in 1 2 3; do
-              git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && git push && break
-              sleep 5
-            done
-          fi
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-bench-report
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Show Ollama log
         if: always()
