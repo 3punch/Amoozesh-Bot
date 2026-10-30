@@ -125,6 +125,51 @@ def clean_comments(body: str) -> tuple[list[str], int]:
     return kept, dropped
 
 
+_SCHED_DAY_RE = re.compile(
+    r"(یکشنبه|سه\s*شنبه|چهارشنبه|پنجشنبه|دوشنبه|شنبه|جمعه)\s*از\s*(\d{1,2}:\d{2})\s*تا\s*(\d{1,2}:\d{2})"
+)
+_TIME_RE = re.compile(r"\d{1,2}:\d{2}")
+_DAY_NAMES = ("یکشنبه", "سه شنبه", "چهارشنبه", "پنجشنبه", "دوشنبه", "شنبه", "جمعه")
+
+
+def short_schedule(raw) -> str:
+    """«پنجشنبه ۰۸:۰۰–۱۰:۳۰» از یک رشته‌ی زمان‌بندی جدول."""
+    text = str(raw or "").replace("ي", "ی").replace("ك", "ک").replace("\u200c", " ")
+    text = re.sub(r"\s+", " ", text)
+    parts = _SCHED_DAY_RE.findall(text)
+    if not parts:
+        return ""
+    fa = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+    seen: dict[str, list[str]] = {}
+    order: list[str] = []
+    for day, start, end in parts:
+        day = re.sub(r"\s+", " ", day)
+        if day not in seen:
+            seen[day] = []
+            order.append(day)
+        seen[day].append(f"{start.translate(fa)}–{end.translate(fa)}")
+    return "؛ ".join(f"{day} {' و '.join(seen[day])}" for day in order)
+
+
+def schedule_parts(raw) -> tuple[set[str], set[str]]:
+    """(روزها، ساعت‌ها) از یک رشته‌ی زمان‌بندی یا خط knowledge_base."""
+    text = str(raw or "").replace("ي", "ی").replace("ك", "ک").replace("\u200c", " ")
+    text = re.sub(r"\s+", " ", text)
+    days: set[str] = set()
+    times: set[str] = set()
+    for day, start, end in _SCHED_DAY_RE.findall(text):
+        days.add(re.sub(r"\s+", " ", day))
+        times.update((start, end))
+    if not days:
+        for day in _DAY_NAMES:
+            if day in text:
+                days.add(day)
+                break
+    if not times:
+        times.update(_TIME_RE.findall(text))
+    return days, times
+
+
 OPINION_MARKERS = (
     "راحت", "سخت", "نمره", "حضور", "غیاب", "امتحان", "میان‌ترم", "میانترم", "پایان‌ترم",
     "جزوه", "تدریس", "اکی", "اوکی", "عالی", "خوب", "بد ", "افتضاح", "پاس", "تشریحی",
@@ -304,6 +349,9 @@ class DataStore:
     def _parse_rules(self) -> None:
         """نقشه‌ی «نام درس ← سال‌هایی که درس فقط برای آن‌ها مجاز است»."""
         self.entry_rules: dict[str, set[str]] = {}
+        self.entry_rules_prof: dict[tuple[str, str], set[str]] = {}
+        # (درس، استاد، روزها، ساعت‌ها) ← سال‌های مجاز
+        self.restrictions: dict[tuple, set[str]] = {}
         if not self.knowledge:
             return
         current_year: str | None = None
@@ -318,26 +366,64 @@ class DataStore:
             if line.startswith("دروسی که") or "قابل اخذ هستند" in line:
                 current_year = None
                 continue
-            if current_year and " - " in line:
-                course = normalize(line.split(" - ")[0])
-                if course:
-                    self.entry_rules.setdefault(course, set()).add(current_year)
+            if not (current_year and " - " in line):
+                continue
+            parts = [part.strip() for part in line.split(" - ", 2)]
+            course = normalize(parts[0])
+            if not course:
+                continue
+            self.entry_rules.setdefault(course, set()).add(current_year)
+            professor = normalize(parts[1]) if len(parts) > 1 else ""
+            if professor:
+                self.entry_rules_prof.setdefault((course, professor), set()).add(current_year)
+            if len(parts) > 2:
+                days, times = schedule_parts(parts[2])
+                key = (course, professor, frozenset(days), frozenset(times))
+                self.restrictions.setdefault(key, set()).add(current_year)
+
+    def _rule_years_for_row(self, course: str, row) -> set[str] | None:
+        """سال‌های مجاز برای یک ردیف مشخص جدول (None = محدودیتی پیدا نشد)."""
+        professor = normalize(str(row.get("استاد", "")))
+        days, times = schedule_parts(row.get("زمان‌بندی تشکیل کلاس"))
+        exact: set[str] | None = None
+        same_day: set[str] | None = None
+        for (rule_course, rule_prof, rule_days, rule_times), years in self.restrictions.items():
+            if rule_course != course or rule_prof != professor:
+                continue
+            if times and rule_times:
+                # تطبیق باید روی ساعت‌ها باشد؛ وگرنه ارائه‌های دیگر همان استاد
+                # در همان روز به‌اشتباه محدود می‌شوند.
+                if rule_times == times:
+                    exact = (exact or set()) | years
+            elif days and rule_days and rule_days == days:
+                same_day = (same_day or set()) | years
+        return exact or same_day
+
+    @staticmethod
+    def _row_years(row) -> set[str]:
+        """سال‌های مجاز از ستون «ورودی مجاز به اخذ» (خالی = همه)."""
+        raw = str(row.get("ورودی مجاز به اخذ", "")).strip()
+        if not raw or "تمامی" in normalize(raw) or "همه" in normalize(raw):
+            return set()
+        return set(re.findall(r"\b(140[0-9])\b", raw.translate(_DIGITS)))
 
     @staticmethod
     def _needs_knowledge(query: str) -> bool:
+        """آیا سوال به قوانین ورودی‌ها مربوط است؟ (تا فقط وقت لازم در پرامپت بیاید)"""
         nq = normalize(query)
         if re.search(r"\b140[0-9]\b", nq):
             return True
-        return any(w in nq for w in ("ورودی", "مجاز", "محدودیت", "ظرفیت", "قابل اخذ", "پیش نیاز"))
+        return any(word in nq for word in
+                   ("ورودی", "مجاز", "محدودیت", "ظرفیت", "قابل اخذ", "پیش نیاز"))
 
-    def check_eligibility(self, query: str) -> str:
-        """اگر سوال «آیا درس X برای ورودی Y مجاز است؟» باشد، پاسخ قطعی را برمی‌گرداند."""
+    def eligibility_info(self, query: str) -> dict | None:
+        """ساختارمند: آیا درس X برای ورودی Y مجاز است؟ (None اگر سوال این نباشد)"""
         nquery = normalize(query)
-        years = {y for y in re.findall(r"\b(140[0-9])\b", nquery)}
+        years = sorted({y for y in re.findall(r"\b(140[0-9])\b", nquery)})
         if not years:
-            return ""
+            return None
 
-        # پیدا کردن نام درس: بلندترین تطابق از میان دروس ارائه‌شده و دروس قانون‌دار
+        # نام درس: بلندترین تطابق از میان دروس ارائه‌شده و دروس قانون‌دار
         candidates: set[str] = set(self.entry_rules)
         if self.courses is not None:
             candidates |= {normalize(n) for n in self.courses.get("نام درس", []) if str(n).strip()}
@@ -346,18 +432,89 @@ class DataStore:
             if len(cand) > 3 and cand in nquery and len(cand) > len(best):
                 best = cand
         if not best:
-            return ""
+            return None
 
-        year = sorted(years)[0]
-        restricted_to = self.entry_rules.get(best)
-        if restricted_to and year in restricted_to:
-            verdict = f"مجاز است (این درس ویژه‌ی ورودی {year} است)."
-        elif restricted_to:
-            others = "، ".join(sorted(restricted_to))
-            verdict = f"مجاز نیست (این درس فقط برای ورودی {others} مجاز است)."
+        year = years[0]
+        course_rules = sorted(self.entry_rules.get(best, set()))
+        rows = self.rows_for_course(best) or self.rows_matching_name(best)
+
+        # knowledge_base می‌گوید این درس «صرفاً برای ورودی‌های X» است؛ پس سال‌های
+        # بیرون از آن فهرست اجازه‌ی اخذ ندارند، حتی اگر یک ردیف جدول «همه» باشد.
+        allowed = (not course_rules) or (year in course_rules)
+
+        allowed_rows: list = []
+        blocked_rows: list = []
+        for row in rows:
+            rule_years = self._rule_years_for_row(best, row)
+            row_years = rule_years if rule_years is not None else self._row_years(row)
+            if allowed and (not row_years or year in row_years):
+                allowed_rows.append(row)
+            else:
+                blocked_rows.append(row)
+
+        if allowed and blocked_rows:
+            labels = []
+            for row in allowed_rows[:2]:
+                professor = str(row.get("استاد", "")).strip()
+                when = short_schedule(row.get("زمان‌بندی تشکیل کلاس"))
+                labels.append(f"{professor} ({when})" if when else professor)
+            reason = (f"فقط در ارائه‌ی {'، '.join(labels)}؛ "
+                      f"بقیه‌ی ارائه‌های این درس ویژه‌ی ورودی "
+                      f"{'، '.join(course_rules)} است.")
+        elif allowed:
+            if course_rules:
+                reason = f"این درس ویژه‌ی ورودی {'، '.join(course_rules)} ارائه شده است."
+            else:
+                reason = ("این درس در فهرست دروس محدودشده نیست و "
+                          "همه‌ی ورودی‌ها می‌توانند آن را اخذ کنند.")
         else:
-            verdict = "مجاز است (این درس در فهرست دروس محدودشده نیست و برای همه‌ی ورودی‌ها قابل اخذ است)."
-        return f"سوال: آیا «{best}» برای ورودی {year} مجاز است؟ ← {verdict}"
+            reason = (f"این درس فقط برای ورودی {'، '.join(course_rules)} مجاز است "
+                      "و برای این ورودی باز نیست.")
+
+        return {
+            "course": best,
+            "year": year,
+            "restricted_to": course_rules,
+            "allowed": allowed,
+            "allowed_rows": allowed_rows,
+            "blocked_rows": blocked_rows,
+            "reason": reason,
+        }
+
+    def check_eligibility(self, query: str) -> str:
+        """اگر سوال «آیا درس X برای ورودی Y مجاز است؟» باشد، پاسخ قطعی را برمی‌گرداند."""
+        info = self.eligibility_info(query)
+        if not info:
+            return ""
+        verdict = "مجاز است" if info["allowed"] else "مجاز نیست"
+        return (
+            f"سوال: آیا «{info['course']}» برای ورودی {info['year']} مجاز است؟ "
+            f"← {verdict} ({info['reason']})"
+        )
+
+    def rows_matching_name(self, course_norm: str) -> list:
+        """ردیف‌های درسی که نامشان با نام knowledge_base کمی متفاوت نوشته شده."""
+        if self.courses is None or not course_norm:
+            return []
+        tokens = set(course_norm.split())
+        need = max(2, len(tokens) - 1)
+        scored = []
+        for _, row in self.courses.iterrows():
+            name_tokens = set(normalize(str(row.get("نام درس", ""))).split())
+            overlap = len(tokens & name_tokens)
+            if overlap >= need and overlap / max(len(tokens), 1) >= 0.6:
+                scored.append((overlap, row))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [row for _, row in scored[:12]]
+
+    def rows_for_course(self, course_norm: str) -> list:
+        """ردیف‌های جدول برای یک نام درس (نرمال‌شده)."""
+        if self.courses is None or not course_norm:
+            return []
+        return [
+            row for _, row in self.courses.iterrows()
+            if normalize(str(row.get("نام درس", ""))) == course_norm
+        ]
 
     def _curriculum_snippet(self, kws: list[str]) -> str:
         if not self.curriculum or not kws:
