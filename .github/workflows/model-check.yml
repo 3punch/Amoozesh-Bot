@@ -6,6 +6,18 @@ name: Test Model Quality
 # همراه با زمینه‌ای که به مدل رسیده، در لاگ همین job می‌بینی.
 
 on:
+  # با هر تغییر در داده‌ها یا پرامپت، یک بار کیفیت مدل تست می‌شود
+  push:
+    paths:
+      - 'ask.py'
+      - 'retrieval.py'
+      - 'prompts.py'
+      - 'llm.py'
+      - 'fallback.py'
+      - 'professors.txt'
+      - 'courses.xlsx'
+      - 'knowledge_base.txt'
+      - '.github/workflows/model-check.yml'
   workflow_dispatch:
     inputs:
       question:
