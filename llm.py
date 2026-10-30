@@ -46,9 +46,10 @@ class LLMError(RuntimeError):
     """خطای ارتباط با مدل محلی."""
 
 
-def _options(max_tokens: int | None = None, temperature: float | None = None) -> dict:
+def _options(max_tokens: int | None = None, temperature: float | None = None,
+             num_ctx: int | None = None) -> dict:
     return {
-        "num_ctx": NUM_CTX,
+        "num_ctx": NUM_CTX if num_ctx is None else num_ctx,
         "num_predict": MAX_TOKENS if max_tokens is None else max_tokens,
         "temperature": TEMPERATURE if temperature is None else temperature,
         "top_p": 0.9,
@@ -97,15 +98,20 @@ def generate(
     max_tokens: int | None = None,
     temperature: float | None = None,
     timeout: int | None = None,
+    num_ctx: int | None = None,
 ) -> str:
-    """یک پاسخ متنی از مدل محلی می‌گیرد. در خطا LLMError می‌اندازد."""
+    """یک پاسخ متنی از مدل محلی می‌گیرد. در خطا LLMError می‌اندازد.
+
+    num_ctx برای حالت «تحلیل مدل» لازم است: متن کامل استادها بزرگ‌تر از زمینه‌ی
+    پیش‌فرضِ پاسخ سریع است.
+    """
     payload = {
         "model": MODEL_NAME,
         "messages": messages,
         "stream": False,
         "keep_alive": KEEP_ALIVE,
         "think": THINK,
-        "options": _options(max_tokens, temperature),
+        "options": _options(max_tokens, temperature, num_ctx),
     }
     url = f"{OLLAMA_HOST}/api/chat"
 

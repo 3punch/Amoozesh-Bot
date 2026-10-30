@@ -27,7 +27,12 @@ on:
       model:
         description: 'نام مدل در Ollama'
         required: false
-        default: 'gemma3:4b'
+        default: 'qwen2.5:7b'
+      deep:
+        description: 'حالت «تحلیل با مدل» را هم تست کن (کندتر است)'
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   contents: read
@@ -77,6 +82,7 @@ jobs:
       - name: Ask the model
         env:
           QUESTION: ${{ inputs.question || '' }}
+          DEEP: ${{ inputs.deep == false && 'false' || 'true' }}
         run: |
           set -u
           mkdir -p reports
@@ -108,6 +114,22 @@ jobs:
             echo '```' >> "$report"
             echo >> "$report"
           done
+
+          # حالت «تحلیل با مدل» (همان مسیر دکمه و /deep): فهم متن کامل
+          if [ "${DEEP:-true}" = "true" ]; then
+            {
+              echo
+              echo "## حالت تحلیل با مدل (deep)"
+              echo
+            } >> "$report"
+            for q in "غلامیان یا تهرانیان؟" "استاد آذر ابوالقاسمی چطور استادی هستن"; do
+              echo "**$q**" >> "$report"
+              echo '```' >> "$report"
+              python ask.py --deep "$q" >> "$report" 2>&1 || echo "(خطا در اجرا)" >> "$report"
+              echo '```' >> "$report"
+              echo >> "$report"
+            done
+          fi
 
           # نسخه‌ی خلاصه‌ی پاسخ‌ها هم برای مرور سریع
           {

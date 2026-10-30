@@ -4,6 +4,7 @@
     python ask.py "استاد آذر ابوالقاسمی چطور استادی هستن"
     python ask.py --context "استاد ایزدیخواه چطوره؟"   # فقط زمینه‌ای که به مدل می‌رود
     python ask.py --json  "بهینه سازی خطی برای ورودی ۱۴۰۳ مجازه؟"
+    python ask.py --deep  "غلامیان یا تهرانیان؟"       # همان مسیر دکمه‌ی «تحلیل با مدل»
 
 اگر Ollama در دسترس نباشد، فقط زمینه و بررسی قطعی چاپ می‌شود.
 """
@@ -12,9 +13,10 @@ import argparse
 import json
 import sys
 
+import deep
 import fallback
 import llm
-from prompts import build_messages
+from prompts import build_analysis_messages, build_messages
 from retrieval import DataStore, estimate_tokens
 
 
@@ -23,10 +25,69 @@ def main() -> int:
     parser.add_argument("question", nargs="+", help="متن سوال")
     parser.add_argument("--context", action="store_true", help="فقط زمینه را نشان بده")
     parser.add_argument("--json", action="store_true", help="خروجی JSON")
+    parser.add_argument("--deep", action="store_true",
+                        help="حالت «تحلیل با مدل» (متن کامل نظرها)")
     args = parser.parse_args()
 
     question = " ".join(args.question).strip()
     store = DataStore(".")
+
+    if args.deep:
+        context, meta = deep.build_deep_context(store, question)
+        messages = build_analysis_messages(question, context)
+        result = {
+            "question": question,
+            "mode": "deep",
+            "facts": fallback.answer(store, question),
+            "stats": meta,
+            "prompt_tokens_estimate": estimate_tokens(messages[0]["content"]),
+            "context": context,
+            "answer": None,
+            "error": None,
+            "verified": None,
+            "speed": None,
+        }
+        if args.context:
+            pass
+        elif not llm.wait_for_server(timeout=20):
+            result["error"] = f"سرویس Ollama روی {llm.OLLAMA_HOST} بالا نیست."
+        else:
+            run = deep.analyze(store, question)
+            result["verified"] = run["ok"]
+            result["verify_reason"] = run["reason"]
+            result["answer"] = run["text"] or None
+            result["speed"] = run.get("stats")
+            if not run["ok"]:
+                result["rejected_model_text"] = run.get("text") or run.get("raw")
+            if run.get("model_failed"):
+                result["error"] = run["reason"]
+
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result["answer"] or args.context else 1
+
+        print(f"❓ سوال (حالت مدل): {question}")
+        print(f"👨‍🏫 استاد(های) پرسیده‌شده: {meta.get('professors') or '—'}")
+        print(f"📄 زمینه‌ی کامل: {meta.get('chars')} کاراکتر | "
+              f"درس‌ها: {meta.get('courses')}")
+        if result["speed"]:
+            sp = result["speed"]
+            print(f"⏱️ {sp.get('duration_s')}s | {sp.get('eval_count')} توکن | "
+                  f"{sp.get('tok_per_s')} توکن/ثانیه | زمینه {sp.get('prompt_eval_count')} توکن")
+        if args.context:
+            print("\n" + "=" * 60 + "\n📄 زمینه:\n" + "=" * 60)
+            print(context)
+        elif result["answer"]:
+            print("\n" + "=" * 60 + f"\n🧠 تحلیل {llm.MODEL_NAME}:\n" + "=" * 60)
+            print(result["answer"])
+        elif result.get("rejected_model_text"):
+            print("\n" + "=" * 60 + "\n🚫 تحلیل رد شد:\n" + "=" * 60)
+            print(f"دلیل: {result.get('verify_reason')}")
+            print(result["rejected_model_text"])
+        elif result["error"]:
+            print(f"\n⚠️ مدل اجرا نشد: {result['error']}")
+        return 0 if result["answer"] or args.context else 1
+
     context, stats = store.build_context(question)
     messages = build_messages(question, context)
 
