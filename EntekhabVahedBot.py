@@ -43,7 +43,10 @@ MAX_MESSAGE_LEN = 4000
 # چند دقیقه ربات بماند؛ صفر = اجرا تا وقتی متوقف شود (مفید برای اجرای دستی/محلی)
 RUN_DURATION_MINUTES = float(os.getenv("RUN_DURATION_MINUTES", "0") or 0)
 # آیا جمع‌بندی زبانی مدل به پاسخ قطعی ضمیمه شود؟ (۱ = بله)
-MODEL_SUMMARY = os.getenv("MODEL_SUMMARY", "1") == "1"
+# آیا جمع‌بندی زبانی مدل به پاسخ قطعی ضمیمه شود؟
+# "0" (پیش‌فرض) = پاسخ فوری از داده‌های قطعی، بدون صدا زدن مدل و بدون Ollama.
+# "1" = یک جمع‌بندی کوتاه مدل هم اضافه می‌شود (روی CPU کند است).
+MODEL_SUMMARY = os.getenv("MODEL_SUMMARY", "0") == "1"
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -137,38 +140,46 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         stats["professors"], stats["courses"],
     )
 
+    facts = fallback.answer(STORE, user_text)
+
+    # در حالت پیش‌فرض (MODEL_SUMMARY=0) مدل هیچ‌وقت صدا زده نمی‌شود: پاسخ فوری و
+    # دقیق از داده‌ها می‌آید و سوال بی‌ربط هم بلافاصله راهنما می‌گیرد.
     answer = ""
     model_failed = False
-    try:
-        answer = await asyncio.to_thread(
-            llm.generate, build_messages(user_text, context_text)
-        )
-    except llm.LLMError as exc:
-        log.error("خطای مدل: %s", exc)
-        model_failed = True
-    except Exception:  # noqa: BLE001
-        log.exception("خطای پیش‌بینی‌نشدهٔ مدل")
-        model_failed = True
+    if MODEL_SUMMARY:
+        try:
+            answer = await asyncio.to_thread(
+                llm.generate, build_messages(user_text, context_text)
+            )
+        except llm.LLMError as exc:
+            log.error("خطای مدل: %s", exc)
+            model_failed = True
+        except Exception:  # noqa: BLE001
+            log.exception("خطای پیش‌بینی‌نشدهٔ مدل")
+            model_failed = True
 
     answer = (answer or "").strip()
     answer = fallback.sanitize_model_text(answer, allow_verdict=bool(stats.get("verdict")))
 
-    # پاسخ نهایی = اطلاعات قطعی از دیتا + جمع‌بندی زبانی مدل (اگر ارزش داشت)
-    facts = fallback.answer(STORE, user_text)
     useful = MODEL_SUMMARY and bool(answer) and _looks_useful(answer)
     if useful:
         ok, why = fallback.verify_model_text(answer, context_text)
         if not ok:
             log.warning("جمع‌بندی مدل رد شد (%s) — فقط داده‌ی قطعی ارسال می‌شود.", why)
             useful = False
+
     if facts:
         if useful:
             final = f"{facts}\n\n🤖 جمع‌بندی مدل:\n{answer}"
         else:
             final = facts + (fallback.OFFLINE_NOTE if model_failed else "")
-        log.info("پاسخ قطعی ارسال شد (جمع‌بندی مدل: %s).", useful)
+        log.info("پاسخ قطعی ارسال شد (جمع‌بندی مدل: %s | مدل صدا زده شد: %s).",
+                 useful, MODEL_SUMMARY)
     elif answer:
         final = answer
+    elif not MODEL_SUMMARY:
+        log.info("سوال خارج از دیتا و جمع‌بندی مدل خاموش است ⇒ راهنما ارسال شد.")
+        final = GREETING
     else:
         log.error("نه مدل پاسخ داد و نه پاسخی از دیتا ساخته شد.")
         final = FALLBACK_MESSAGE
@@ -197,6 +208,10 @@ async def on_startup(app) -> None:
         app.create_task(auto_stop(app, RUN_DURATION_MINUTES))
         log.info("این نمونه %.0f دقیقه اجرا می‌شود، سپس جایش را به run بعدی می‌دهد.",
                  RUN_DURATION_MINUTES)
+    if not MODEL_SUMMARY:
+        log.info("MODEL_SUMMARY=0 ⇒ پاسخ‌ها از داده‌های قطعی ساخته می‌شوند؛ "
+                 "نیازی به Ollama نیست.")
+        return
     if not llm.wait_for_server(timeout=120):
         log.error("سرویس Ollama در %s بالا نیامد.", llm.OLLAMA_HOST)
         return

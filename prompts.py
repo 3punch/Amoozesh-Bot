@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import llm
+
 SYSTEM_PROMPT = """تو «دستیار انتخاب واحد» دانشگاه هستی.
 
 نقش تو فقط این است: از اطلاعاتی که در ادامه می‌آید یک جمع‌بندی کوتاه فارسی بنویسی.
@@ -37,7 +39,11 @@ GREETING = (
 )
 
 def build_messages(query: str, context: str) -> list[dict]:
+    user = query
+    # Qwen3 در حالت فکر نکردن باید /no_think ببیند، وگرنه استدلال طولانی می‌نویسد
+    if llm.is_thinking_model() and not llm.THINK:
+        user = f"{query}\n/no_think"
     return [
         {"role": "system", "content": SYSTEM_PROMPT.format(context=context)},
-        {"role": "user", "content": query},
+        {"role": "user", "content": user},
     ]

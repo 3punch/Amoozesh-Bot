@@ -20,10 +20,10 @@ from dataclasses import dataclass, field
 import pandas as pd
 from pypdf import PdfReader
 
-MAX_CONTEXT_CHARS = int(os.getenv("MAX_CONTEXT_CHARS", "9000"))
-MAX_PROFESSOR_BLOCKS = int(os.getenv("MAX_PROFESSOR_BLOCKS", "3"))
-MAX_COURSE_ROWS = int(os.getenv("MAX_COURSE_ROWS", "8"))
-MAX_PROF_BLOCK_CHARS = 1400
+MAX_CONTEXT_CHARS = int(os.getenv("MAX_CONTEXT_CHARS", "4000"))
+MAX_PROFESSOR_BLOCKS = int(os.getenv("MAX_PROFESSOR_BLOCKS", "2"))
+MAX_COURSE_ROWS = int(os.getenv("MAX_COURSE_ROWS", "5"))
+MAX_PROF_BLOCK_CHARS = 900
 MAX_CURRICULUM_CHARS = 1000
 MAX_COURSE_INDEX_CHARS = 1200
 
