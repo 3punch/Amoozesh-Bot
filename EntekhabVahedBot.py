@@ -137,38 +137,48 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         stats["professors"], stats["courses"],
     )
 
+    facts = fallback.answer(STORE, user_text)
+
+    # در حالت پیش‌فرض (MODEL_SUMMARY=0) مدل هیچ‌وقت صدا زده نمی‌شود: پاسخ فوری و
+    # دقیق از داده‌ها می‌آید و سوال بی‌ربط هم بلافاصله راهنما می‌گیرد.
+    # با MODEL_SUMMARY=1 مدل یک جمع‌بندی کوتاه هم اضافه می‌کند (کندتر).
+    model_needed = MODEL_SUMMARY
     answer = ""
     model_failed = False
-    try:
-        answer = await asyncio.to_thread(
-            llm.generate, build_messages(user_text, context_text)
-        )
-    except llm.LLMError as exc:
-        log.error("خطای مدل: %s", exc)
-        model_failed = True
-    except Exception:  # noqa: BLE001
-        log.exception("خطای پیش‌بینی‌نشدهٔ مدل")
-        model_failed = True
+    if model_needed:
+        try:
+            answer = await asyncio.to_thread(
+                llm.generate, build_messages(user_text, context_text)
+            )
+        except llm.LLMError as exc:
+            log.error("خطای مدل: %s", exc)
+            model_failed = True
+        except Exception:  # noqa: BLE001
+            log.exception("خطای پیش‌بینی‌نشدهٔ مدل")
+            model_failed = True
 
     answer = (answer or "").strip()
     answer = fallback.sanitize_model_text(answer, allow_verdict=bool(stats.get("verdict")))
 
-    # پاسخ نهایی = اطلاعات قطعی از دیتا + جمع‌بندی زبانی مدل (اگر ارزش داشت)
-    facts = fallback.answer(STORE, user_text)
     useful = MODEL_SUMMARY and bool(answer) and _looks_useful(answer)
     if useful:
         ok, why = fallback.verify_model_text(answer, context_text)
         if not ok:
             log.warning("جمع‌بندی مدل رد شد (%s) — فقط داده‌ی قطعی ارسال می‌شود.", why)
             useful = False
+
     if facts:
         if useful:
             final = f"{facts}\n\n🤖 جمع‌بندی مدل:\n{answer}"
         else:
-            final = facts + (fallback.OFFLINE_NOTE if model_failed else "")
-        log.info("پاسخ قطعی ارسال شد (جمع‌بندی مدل: %s).", useful)
+            final = facts + (fallback.OFFLINE_NOTE if model_failed and model_needed else "")
+        log.info("پاسخ قطعی ارسال شد (جمع‌بندی مدل: %s | مدل صدا زده شد: %s).",
+                 useful, model_needed)
     elif answer:
         final = answer
+    elif not model_needed:
+        log.info("سوال خارج از دیتا و جمع‌بندی مدل خاموش است ⇒ راهنما ارسال شد.")
+        final = GREETING
     else:
         log.error("نه مدل پاسخ داد و نه پاسخی از دیتا ساخته شد.")
         final = FALLBACK_MESSAGE
