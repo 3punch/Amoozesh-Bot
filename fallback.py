@@ -161,14 +161,21 @@ def course_line(row, with_professor: bool = True) -> str:
 
 # ---------------------------------------------------------------- تحلیل نظرات
 
-POSITIVE = (
-    "خوب", "عالی", "راحت", "ارفاق", "منصف", "مسلط", "روان", "پیشنهاد",
-    "اکی", "اوکی", "راضی", "محترم", "احترام", "بهتر", "کافی", "تمیز",
-)
-NEGATIVE = (
-    "بد", "افتضاح", "سختگیر", "ضعیف", "ناراضی", "پشیمون", "خشک",
-    "بدترین", "نامفهوم", "مشکل", "نمیده", "نمره کم", "سخت",
-)
+# واژه‌نامه‌ی قطبیت. متن آرشیو خودمانی و کنایه‌آمیز است، پس ترتیب مهم است:
+# اول نفی‌ها و اصطلاحات («خوب نیست» مثبت نیست)، بعد واژه‌های عمومی.
+QUESTION_WORDS = ("چجور", "چطور", "چیه", "کسی", "می‌دونه", "میدونه", "کدوم")
+
+
+def _is_question(text: str) -> bool:
+    """پرسش واقعی؛ پیام بلند با یک علامت سوال نمایشی، نظر حساب می‌شود."""
+    norm = normalize(text)
+    if any(word in norm for word in QUESTION_WORDS):
+        return True
+    if any(mark in text for mark in ("؟", "?")):
+        return len(norm.split()) <= 8
+    return False
+
+
 THEMES = {
     "نمره‌دهی": ("نمره", "ارفاق", "تصحیح", "نمره‌دهی"),
     "حضور و غیاب": ("حضور", "غیاب"),
@@ -192,8 +199,122 @@ THEME_NEGATIVE = {
 }
 
 
-def _is_question(text: str) -> bool:
-    return any(marker in text for marker in QUESTION_MARKERS)
+SENTIMENT_RULES: tuple[tuple[str, int], ...] = (
+    # --- منفی
+    (r"خوب\s*(?:نیست|نیسن|نیس|نبود|نبوده|نباشه|نبودن)", -2),
+    (r"تاس\s*(?:می\s*نداز|مینداز|انداز|انداخت|اندازی|بنداز)", -3),
+    (r"رندوم", -2),
+    (r"موجب\s*سلامتی", -3),
+    (r"برندار", -3),
+    (r"بی\s*سواد", -3),
+    (r"بی\s*مسئولیت", -3),
+    (r"وقت\s*تلف", -2),
+    (r"نگاه\s*نمی", -2),
+    (r"افتضاح|بدترین|فاجعه", -3),
+    (r"سخت\s*گیر|سختگیر", -2),
+    (r"نمره\s*کم", -2),
+    (r"نامفهوم|نمی\s*فهم|نمیفهم|نفهمید", -1),
+    (r"پشیمون", -2),
+    (r"ضعیف", -2),
+    (r"ناراضی", -2),
+    (r"حذف\s*شد", -1),
+    (r"سنگین", -1),
+    (r"بی\s*خودی|الکی", -1),
+    (r"جرقه\s*می\s*زن|جرقه\s*می\s*زنم", -1),
+    # --- مثبت
+    (r"ارفاق", +2),
+    (r"منصف", +2),
+    (r"عالی", +2),
+    (r"سواد\s*خوب", +2),
+    (r"درست\s*تر\s*نمره", +2),
+    (r"(?:حال\s*می|حال\s*می\s*کردم|حالم\s*باهاش)", +1),
+    (r"راحت", +1),
+    (r"راضی", +1),
+    (r"پیشنهاد\s*می", +1),
+    (r"مسلط", +2),
+    (r"روان", +1),
+    (r"محترم|احترام", +1),
+    (r"کافی(?:ه|ست| بود)?", +1),
+    (r"یاد\s*می\s*دهد|یاد\s*میده|یاد\s*بگیر", +1),
+    (r"خوب(?:ه|ی| است| بود| هست|ین)?", +2),
+)
+SENTIMENT_RULES = tuple((re.compile(rx), weight) for rx, weight in SENTIMENT_RULES)
+
+
+def _sentiment(text: str) -> int:
+    """امتیاز قطبیت یک پیام (منفی/صفر/مثبت).
+
+    هر الگو پس از تطبیق از متن حذف می‌شود تا «خوب نیست» یک بار منفی شمرده
+    شود، نه یک بار مثبت («خوب») و یک بار منفی.
+    """
+    norm = normalize(text)
+    total = 0
+    for rx, weight in SENTIMENT_RULES:
+        norm, count = rx.subn(" ", norm)
+        if count:
+            total += weight
+    return total
+
+
+def _is_opinion(text: str) -> bool:
+    """پیام واقعاً حرفی برای گفتن دارد یا فقط سوال/شوخی/هماهنگی است."""
+    if _is_question(text):
+        return False
+    if _sentiment(text):
+        return True
+    norm = normalize(text)
+    return len(norm.split()) >= 6 and any(marker in norm for marker in OPINION_MARKERS)
+
+
+def _theme_polarity(entries: list[tuple[str, int]]) -> dict[str, tuple[int, int]]:
+    """برای هر موضوع: (تعداد پیام هم‌جهت مثبت، تعداد پیام هم‌جهت منفی)."""
+    out = {theme: [0, 0] for theme in THEMES}
+    for comment, score in entries:
+        if not score:
+            continue
+        norm = normalize(comment)
+        for theme, words in THEMES.items():
+            if any(normalize(word) in norm for word in words):
+                out[theme][0 if score > 0 else 1] += 1
+    return {theme: (pos, neg) for theme, (pos, neg) in out.items()}
+
+
+def _polarity(comments: list[str]) -> dict[str, tuple[int, int]]:
+    """نسخه‌ی ساده (بدون نسبت‌دادن به استاد) — برای سازگاری."""
+    return _theme_polarity(
+        [(c, _sentiment(c)) for c in comments if not _is_question(c)]
+    )
+
+
+def _verdict(scores: dict[str, int], positive: int, negative: int,
+             evidence: int) -> str:
+    """حکم کوتاه و قابل‌عمل از داده‌ی موجود."""
+    if scores:
+        average = sum(scores.values()) / len(scores)
+        if average >= 8.5:
+            return "استاد خوبی است؛ ارزیابی دانشجویان مثبت و یکدست است."
+        if average >= 7:
+            return "ارزیابی کلی مثبت است، ولی در برخی شاخص‌ها ضعف دارد."
+        if average >= 5.5:
+            return "ارزیابی متوسط است؛ نظرات دانشجویان هم‌جهت نیست."
+        return "ارزیابی دانشجویان ضعیف است؛ با احتیاط انتخاب کن."
+
+    if positive + negative == 0:
+        if evidence:
+            return "نظرات موجود بیشتر پرسش و شوخی است؛ ارزیابی روشنی ثبت نشده."
+        return "ارزیابی ثبت‌شده‌ای برای این استاد در آرشیو نیست."
+
+    ratio = positive / max(positive + negative, 1)
+    if ratio >= 0.66:
+        return "نظرهای ثبت‌شده بیشتر مثبت است."
+    if ratio <= 0.34:
+        return "نظرهای ثبت‌شده بیشتر منفی است؛ با احتیاط انتخاب کن."
+    if negative > positive:
+        return "انتقادها بیشتر از تعریف‌هاست، هرچند نظر مثبت هم ثبت شده."
+    return "نظرات درباره‌ی این استاد متناقض است و جمع‌بندی قطعی ممکن نیست."
+
+
+# ---------------------------------------------------------------- پاسخ‌ها
 
 
 def _form(comments: list[str]) -> str | None:
@@ -228,82 +349,77 @@ def _form_text(form: str | None, key: str) -> str:
     return _normalize_form_value(_field(form, patterns[key]))
 
 
-def _polarity(comments: list[str]) -> dict[str, tuple[int, int]]:
-    """برای هر موضوع: (تعداد نظر هم‌جهت مثبت، تعداد نظر هم‌جهت منفی)"""
-    out = {theme: [0, 0] for theme in THEMES}
-    for comment in comments:
-        if _is_question(comment):
+# بندهای یک پیام با این جداکننده‌ها شکسته می‌شود تا معلوم شود هر حرف درباره‌ی
+# کدام استاد است («غلامیان درست تر نمره میده ولی تهرانیان تاس میندازه»).
+CLAUSE_SPLIT = re.compile(r"[.!؟?؛،\n]+|\s(?:ولی|اما|پس|چون|وگرنه)\s")
+
+
+def _name_keys(store) -> dict[str, str]:
+    """نام خانوادگی یکتای هر استاد ← نام کامل.
+
+    فقط واژه‌ی آخر نام (فامیل) نگه داشته می‌شود و آن هم وقتی در نام یک استاد
+    یکتا باشد؛ وگرنه «محمد» یا «امید» (که واژه‌ی معمولی هم هستند) پیام‌های
+    بی‌ربط را به استاد اشتباه می‌چسبانند.
+    """
+    surname: dict[str, list[str]] = {}
+    for professor in store.professors:
+        tokens = professor.norm_name.split()
+        if not tokens:
             continue
-        pos = sum(comment.count(word) for word in POSITIVE)
-        neg = sum(comment.count(word) for word in NEGATIVE)
-        if pos == neg:
+        surname.setdefault(tokens[-1], []).append(professor.name)
+    return {key: names[0] for key, names in surname.items()
+            if len(names) == 1 and len(key) >= 3}
+
+
+def _mentions(norm: str, key: str) -> int:
+    """جای نام خانوادگی در متن (با پسوندهای چسبیده مثل «غلامیانه»)، یا -۱."""
+    match = re.search(rf"(?<!\w){re.escape(key)}(?:م|ت|ش|ها|های|ه|ی|و|رو|هم|ست)?(?!\w)",
+                      norm)
+    return match.start() if match else -1
+
+
+def _attributed(comment: str, keys: dict[str, str], default: str) -> dict[str, int]:
+    """قطبیت پیام را به استاد صاحب هر بند نسبت می‌دهد.
+
+    اگر بندی نام کسی را نیاورد، ادامه‌ی حرف همان استاد قبلی حساب می‌شود؛
+    و اگر کل پیام بی‌نام باشد، به استاد همان شناسنامه (default) می‌رسد.
+    """
+    scores: dict[str, int] = {}
+    current = default
+    for clause in CLAUSE_SPLIT.split(comment):
+        if not clause.strip():
             continue
-        for theme, words in THEMES.items():
-            if any(word in comment for word in words):
-                out[theme][0 if pos > neg else 1] += 1
-    return {theme: (pos, neg) for theme, (pos, neg) in out.items()}
+        norm = normalize(clause)
+        found = sorted(
+            (pos, keys[token])
+            for token in keys
+            if (pos := _mentions(norm, token)) >= 0
+        )
+        owners = [name for _, name in found]
+        target = owners[0] if owners else current
+        current = target
+        score = _sentiment(clause)
+        if score:
+            scores[target] = scores.get(target, 0) + score
+    return scores
 
 
-def _verdict(scores: dict[str, int], polarity: dict[str, tuple[int, int]],
-             evidence: int) -> str:
-    if scores:
-        average = sum(scores.values()) / len(scores)
-        if average >= 8.5:
-            return "استاد خوبی است؛ ارزیابی دانشجویان مثبت و یکدست است."
-        if average >= 7:
-            return "ارزیابی کلی مثبت است، ولی در برخی شاخص‌ها ضعف دارد."
-        if average >= 5.5:
-            return "ارزیابی متوسط است؛ نظرات دانشجویان هم‌جهت نیست."
-        return "ارزیابی دانشجویان ضعیف است؛ با احتیاط انتخاب کن."
-
-    positive = sum(pos for pos, neg in polarity.values() if pos > neg)
-    negative = sum(neg for pos, neg in polarity.values() if neg > pos)
-    if positive >= negative + 2:
-        return "نظرهای ثبت‌شده بیشتر مثبت است."
-    if negative >= positive + 2:
-        return "نظرهای ثبت‌شده بیشتر منفی است؛ با احتیاط انتخاب کن."
-    if evidence == 0:
-        return "ارزیابی ثبت‌شده‌ای برای این استاد در آرشیو نیست."
-    return "نظرات درباره‌ی این استاد متناقض است و جمع‌بندی قطعی ممکن نیست."
-
-
-# ---------------------------------------------------------------- پاسخ‌ها
-
-
-def professor_answer(store, name: str, course: str = "") -> str | None:
-    """نتیجه‌گیری ربات درباره‌ی یک استاد (بدون نقل‌قول از پیام‌ها)."""
-    professor = next(
-        (p for p in store.professors if p.norm_name == normalize(name)), None
-    )
-    if professor is None:
-        return None
-
-    comments = professor.comments
-    form = _form(comments)
-    scores = _scores(form)
-    polarity = _polarity(comments)
-    evidence = sum(1 for c in comments if not _is_question(c) and
-                   any(marker in c for marker in OPINION_MARKERS))
-
-    lines = [
-        f"👤 {professor.name} · بر پایه‌ی {_fa(len(comments))} پیام آرشیو",
-        f"🎯 نتیجه: {_verdict(scores, polarity, evidence)}",
-    ]
-
-    if scores:
-        average = sum(scores.values()) / len(scores)
-        lines.append(f"📊 ارزیابی دانشجویان: {_fa(f'{average:.1f}')} از ۱۰")
-        lines.append("   " + " · ".join(f"{k} {_fa(v)}" for k, v in scores.items()))
-
+def _strengths_warnings(form: str | None,
+                        polarity: dict[str, tuple[int, int]]) -> tuple[list[str], list[str]]:
+    """نقاط قوت و هشدارهای یک استاد از فرم استادشناسی + هم‌جهتی نظرات."""
     strengths: list[str] = []
     warnings: list[str] = []
+    # موضوع‌هایی که فرم درباره‌شان حرف زده؛ دیگر از شمارش نظرها تکرار نمی‌شوند
+    covered: set[str] = set()
 
     grading = _form_text(form, "نمره‌دهی")
     if grading:
         if any(word in grading for word in ("ارفاق", "دست باز", "خوب")):
             strengths.append(f"نمره‌دهی: {grading}")
+            covered.add("نمره‌دهی")
         elif any(word in grading for word in ("سخت", "کم", "بد")):
             warnings.append(f"نمره‌دهی: {grading}")
+            covered.add("نمره‌دهی")
 
     attendance = _form_text(form, "حضور")
     if attendance:
@@ -311,6 +427,7 @@ def professor_answer(store, name: str, course: str = "") -> str | None:
             strengths.append("روی حضور و غیاب سختگیر نیست")
         else:
             warnings.append("حضور و غیاب برگزار می‌شود و برایش مهم است")
+        covered.add("حضور و غیاب")
 
     resources = _form_text(form, "منابع")
     if resources:
@@ -322,48 +439,301 @@ def professor_answer(store, name: str, course: str = "") -> str | None:
             warnings.append("کفایت منابع برای امتحان: تا حدی")
 
     for theme, (pos, neg) in polarity.items():
+        if theme in covered:
+            continue
         if pos - neg >= 2:
             strengths.append(THEME_POSITIVE[theme])
         elif neg - pos >= 2:
             warnings.append(THEME_NEGATIVE[theme])
 
-    def unique(items: list[str]) -> list[str]:
+    def unique(items: list[str], limit: int = 4) -> list[str]:
         seen: list[str] = []
         for item in items:
             if item not in seen:
                 seen.append(item)
-        return seen[:4]
+        return seen[:limit]
 
     strengths, warnings = unique(strengths), unique(warnings)
-    # یک نکته ممکن است در دو دسته بیاید؛ تکراری‌ها حذف می‌شوند
+    # یک نکته ممکن است در دو دسته بیاید؛ تکرار حذف می‌شود
     warnings = [item for item in warnings if item not in strengths]
+    return strengths, warnings
+
+
+def _quality_index(scores: dict[str, int], positive: int, negative: int) -> float | None:
+    """شاخص ۰ تا ۱۰ برای مقایسه‌ی دو استاد (امتیاز فرم، وگرنه نسبت نظرها)."""
+    if scores:
+        return sum(scores.values()) / len(scores)
+    if positive + negative:
+        return 5 + 5 * (positive - negative) / (positive + negative)
+    return None
+
+
+def professor_profile(store, name: str) -> dict | None:
+    """همه‌ی چیزهایی که از داده درباره‌ی یک استاد می‌دانیم، در یک ساختار."""
+    professor = next(
+        (p for p in store.professors if p.norm_name == normalize(name)), None
+    )
+    if professor is None:
+        return None
+
+    comments = professor.comments
+    keys = _name_keys(store)
+    entries: list[tuple[str, int]] = []
+    for comment in comments:
+        if _is_question(comment):
+            continue
+        mixed = _attributed(comment, keys, professor.name)
+        entries.append((comment, mixed.get(professor.name, 0)))
+
+    form = _form(comments)
+    scores = _scores(form)
+    polarity = _theme_polarity(entries)
+    opinions = [score for _, score in entries]
+    positive = sum(1 for score in opinions if score > 0)
+    negative = sum(1 for score in opinions if score < 0)
+    evidence = sum(1 for c in comments if _is_opinion(c))
+    strengths, warnings = _strengths_warnings(form, polarity)
+
+    return {
+        "name": professor.name,
+        "comments": len(comments),
+        "form": form,
+        "scores": scores,
+        "polarity": polarity,
+        "positive": positive,
+        "negative": negative,
+        "neutral": len(comments) - positive - negative,
+        "evidence": evidence,
+        "strengths": strengths,
+        "warnings": warnings,
+        "verdict": _verdict(scores, positive, negative, evidence),
+        "index": _quality_index(scores, positive, negative),
+    }
+
+
+def professor_answer(store, name: str, course: str = "") -> str | None:
+    """نتیجه‌گیری ربات درباره‌ی یک استاد (بدون نقل‌قول از پیام‌ها)."""
+    profile = professor_profile(store, name)
+    if profile is None:
+        return None
+
+    lines = [
+        f"👤 {profile['name']} · بر پایه‌ی {_fa(profile['comments'])} پیام آرشیو",
+        f"🎯 نتیجه: {profile['verdict']}",
+    ]
+
+    scores = profile["scores"]
+    if scores:
+        average = sum(scores.values()) / len(scores)
+        lines.append(f"📊 ارزیابی دانشجویان: {_fa(f'{average:.1f}')} از ۱۰")
+        lines.append("   " + " · ".join(f"{k} {_fa(v)}" for k, v in scores.items()))
+    elif profile["positive"] or profile["negative"]:
+        lines.append(f"🗣 نظرها: {_fa(profile['positive'])} مثبت · "
+                     f"{_fa(profile['negative'])} منفی")
 
     notes: list[str] = []
-    if not strengths and not warnings and evidence and not course:
-        notes.append("ارزیابی‌های موجود پراکنده است و جمع‌بندی روشن نمی‌دهد؛ "
-                     "برای تصمیم بهتر نام درس را هم بپرس.")
-    if not scores and not evidence:
+    touched = profile["positive"] + profile["negative"]
+    if not profile["strengths"] and not profile["warnings"] and profile["evidence"] and not course:
+        if touched < 4:
+            notes.append("نظرهای ثبت‌شده برای این استاد کم است؛ ارزیابی قطعی نیست.")
+        else:
+            notes.append("نظرها پراکنده است و جمع‌بندی روشن نمی‌دهد؛ "
+                         "برای تصمیم بهتر نام درس را هم بپرس.")
+    if not scores and not profile["evidence"]:
         notes.append("در آرشیو ارزیابی روشنی درباره‌ی این استاد ثبت نشده است.")
 
-    if strengths:
+    if profile["strengths"]:
         lines.append("")
         lines.append("✅ نقاط قوت")
-        lines.extend(f"• {item}" for item in strengths)
-    if warnings:
+        lines.extend(f"• {item}" for item in profile["strengths"])
+    if profile["warnings"]:
         lines.append("")
         lines.append("⚠️ نکات مهم")
-        lines.extend(f"• {item}" for item in warnings)
+        lines.extend(f"• {item}" for item in profile["warnings"])
     if notes:
         lines.append("")
         lines.extend(f"ℹ️ {item}" for item in notes)
 
-    courses = courses_for_professor(store, professor.name, course_norm=course)
+    courses = courses_for_professor(store, profile["name"], course_norm=course)
     if courses:
         lines.append("")
         lines.append(f"📚 ارائه‌های این استاد در «{_cell(course)}»" if course
                      else "📚 ارائه‌ی این ترم")
         lines.extend(courses)
 
+    return "\n".join(lines)
+
+
+BETTER = r"(?:بهتر|به\s*تر|درست\s*تر|راحت\s*تر|سنگین\s*تر|کم\s*ریسک\s*تر|انتخاب\s*بهتر)"
+
+
+def _surname(name: str) -> str:
+    tokens = normalize(name).split()
+    return tokens[-1] if tokens else ""
+
+
+def _comparative_votes(store, names: list[str], extra_comments: list[str] | None = None
+                       ) -> tuple[dict[str, int], int]:
+    """رأی‌های مستقیم «کدام بهتر است» از پیام‌هایی که هر دو استاد را نام می‌برند.
+
+    خروجی: (امتیاز هر استاد، تعداد مقایسه‌های صریح). جمله‌های پرسشی («X بهتره یا Y؟»)
+    شمرده نمی‌شوند، چون نظری در خود ندارند.
+    """
+    names = [n for n in names if _surname(n)]
+    if len(names) < 2:
+        return {n: 0 for n in names}, 0
+
+    pattern = "|".join(re.escape(_surname(n)) for n in names)
+    better_then = re.compile(rf"({pattern})\s*(?:هم|خیلی|یکم|کمی|واقعا|که|اصلا)?\s*{BETTER}")
+    better_from = re.compile(rf"{BETTER}\s*(?:از|نسبت\s*به)\s*({pattern})")
+    worse_from = re.compile(rf"از\s*({pattern})\s*بدتر")
+    better_than_named = re.compile(
+        rf"(?:در\s*مقابل|نسبت\s*به|از)\s*({pattern})[^.؟?]*?{BETTER}"
+    )
+
+    def resolve(token_text: str) -> str | None:
+        for name in names:
+            if token_text.startswith(_surname(name)):
+                return name
+        return None
+
+    votes = {name: 0 for name in names}
+    comparisons = 0
+    comments: list[str] = list(extra_comments or [])
+    for name in names:
+        professor = next((p for p in store.professors if p.name == name), None)
+        if professor:
+            comments.extend(professor.comments)
+
+    seen: set[str] = set()
+    for comment in comments:
+        norm = normalize(comment)
+        if norm in seen or _is_question(comment):
+            continue
+        seen.add(norm)
+        mentioned = [n for n in names if _mentions(norm, _surname(n)) >= 0]
+        if len(mentioned) < 2:
+            continue
+
+        found_here = False
+        # «X بهتر است»
+        for match in better_then.finditer(norm):
+            name = resolve(match.group(1))
+            if name:
+                votes[name] += 1
+                found_here = True
+        # «بهتر از X» ⇒ به زیان X
+        for match in better_from.finditer(norm):
+            name = resolve(match.group(1))
+            if name:
+                votes[name] -= 1
+                found_here = True
+        # «از X بدتر» ⇒ به سود X
+        for match in worse_from.finditer(norm):
+            name = resolve(match.group(1))
+            if name:
+                votes[name] += 1
+                found_here = True
+        # «در مقابل X انتخاب بهتری است» ⇒ به سود دیگری، به زیان X
+        for match in better_than_named.finditer(norm):
+            name = resolve(match.group(1))
+            if name:
+                votes[name] -= 1
+                others = [n for n in mentioned if n != name]
+                if len(others) == 1:
+                    votes[others[0]] += 1
+                found_here = True
+        if found_here:
+            comparisons += 1
+    return votes, comparisons
+
+
+def compare_answer(store, names: list[str]) -> str | None:
+    """مقایسه‌ی دو یا سه استاد و گفتن این‌که کدام برای انتخاب کم‌ریسک‌تر است."""
+    profiles = [p for p in (professor_profile(store, n) for n in names) if p]
+    if len(profiles) < 2:
+        return None
+
+    label = "، ".join(p["name"] for p in profiles)
+    votes, comparisons = _comparative_votes(store, [p["name"] for p in profiles])
+
+    lines = [f"⚖️ مقایسه‌ی {label}"]
+
+    # ۱) اگر آرشیو مقایسه‌ی مستقیم دارد، همان تعیین‌کننده است.
+    order = sorted(votes.items(), key=lambda item: item[1], reverse=True)
+    top_name, top_vote = order[0]
+    spread = top_vote - order[-1][1]
+    if comparisons and spread >= 1:
+        lines.append(f"🎯 نتیجه: نظرهای آرشیو به «{top_name}» متمایل‌تر است؛ "
+                     f"{_fa(comparisons)} مقایسه‌ی مستقیم ثبت شده و نتیجه به سود "
+                     "اوست.")
+    else:
+        # ۲) وگرنه شاخص کیفیت (امتیاز فرم یا نسبت نظرها)
+        ranked = sorted((p for p in profiles if p["index"] is not None),
+                        key=lambda p: p["index"], reverse=True)
+        empty = [p["name"] for p in profiles if p["index"] is None]
+        if not ranked:
+            lines.append("🎯 نتیجه: داده‌ی کافی برای مقایسه‌ی این اساتید در آرشیو نیست.")
+        elif len(ranked) == 1:
+            only = ranked[0]
+            lines.append(f"🎯 نتیجه: در آرشیو فقط برای «{only['name']}» نظر ثبت شده "
+                         f"({_fa(only['positive'])} مثبت · {_fa(only['negative'])} منفی) "
+                         f"و برای {'، '.join('«' + n + '»' for n in empty)} ارزیابی "
+                         "روشنی نیست؛ تصمیم با خودت، اما داده درباره‌ی اولی حرف می‌زند.")
+        elif ranked[0]["index"] >= 8 and ranked[1]["index"] >= 8:
+            lines.append("🎯 نتیجه: ارزیابی هر دو خوب است؛ تفاوت معناداری بین آن‌ها "
+                         "در آرشیو دیده نمی‌شود و انتخاب به ساعت کلاس بستگی دارد.")
+        elif ranked[0]["index"] - ranked[1]["index"] >= 0.5:
+            best = ranked[0]
+            if best["index"] < 4.5:
+                lines.append(f"🎯 نتیجه: هیچ‌کدام ارزیابی مثبتی ندارند، ولی "
+                             f"«{best['name']}» کم‌ریسک‌تر است.")
+            else:
+                lines.append(f"🎯 نتیجه: «{best['name']}» انتخاب کم‌ریسک‌تری است.")
+        else:
+            lines.append("🎯 نتیجه: تفاوت معناداری بین این اساتید در آرشیو دیده "
+                         "نمی‌شود؛ بر اساس ساعت کلاس و درس تصمیم بگیر.")
+
+    lines.append("")
+    for profile in profiles:
+        marks = [f"{_fa(profile['comments'])} پیام",
+                 f"{_fa(profile['positive'])} نظر مثبت",
+                 f"{_fa(profile['negative'])} نظر منفی"]
+        if profile["scores"]:
+            average = sum(profile["scores"].values()) / len(profile["scores"])
+            marks.insert(0, f"فرم: {_fa(f'{average:.1f}')} از ۱۰")
+        lines.append(f"👤 {profile['name']} — " + " · ".join(marks))
+        if profile["strengths"]:
+            lines.append(f"   ✅ {profile['strengths'][0]}")
+        if profile["warnings"]:
+            lines.append(f"   ⚠️ {profile['warnings'][0]}")
+        if not (profile["strengths"] or profile["warnings"]):
+            lines.append(f"   ℹ️ {profile['verdict']}")
+
+    if comparisons:
+        parts = []
+        for name, score in order:
+            if score > 0:
+                parts.append(f"{_fa(score)} به نفع {name}")
+            elif score < 0:
+                parts.append(f"{_fa(-score)} به زیان {name}")
+        if parts:
+            lines.append("")
+            lines.append("🔁 مقایسه‌های مستقیم: " + " · ".join(parts))
+
+    lines.append("")
+    lines.append("📚 این ترم")
+    listed = False
+    for profile in profiles:
+        for row in courses_for_professor(store, profile["name"], limit=2):
+            lines.append(f"• {profile['name']} — {row.lstrip('• ')}")
+            listed = True
+    if not listed:
+        lines.append("• برای این اساتید در جدول این ترم درسی ثبت نشده است.")
+
+    lines.append("")
+    lines.append("ℹ️ این مقایسه از فرم‌ها و نظرهای آرشیو ساخته شده؛ اگر یکی از این‌ها "
+                 "را برای درس مشخصی می‌خواهی، نام درس را هم بگو.")
     return "\n".join(lines)
 
 
@@ -493,6 +863,15 @@ def answer(store, query: str, want_model: bool = True) -> str | None:
 
     matches = store.match_professors(keywords)
     named = [professor.name for professor, is_named in matches if is_named]
+
+    # «فلانی یا فلانی؟» ⇒ مقایسه، نه دو کارت جدا (به همان ترتیبی که پرسیده شده)
+    nquery = normalize(query)
+    if len(named) >= 2:
+        named.sort(key=lambda name: nquery.find(_surname(name)) % max(len(nquery), 1))
+        comparison = compare_answer(store, named[:3])
+        if comparison:
+            return comparison
+
     if named:
         # اگر نام درس هم در پرسش باشد، فقط ارائه‌های همان درس نمایش داده می‌شود
         course_norm = ""
