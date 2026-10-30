@@ -124,6 +124,20 @@ def answer(store, query: str, want_model: bool = True) -> str | None:
     return None
 
 
+BULLET_RE = re.compile(r"^[*\-•▪◦]\s+")
+
+
+def _plain(line: str) -> str:
+    """مارک‌داون مدل را به متن ساده‌ی تلگرام تبدیل می‌کند."""
+    line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
+    line = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", line)
+    line = re.sub(r"`([^`]+)`", r"\1", line)
+    line = re.sub(r"#{1,6}\s*", "", line)
+    if BULLET_RE.match(line):
+        line = BULLET_RE.sub("• ", line)
+    return line.strip()
+
+
 def sanitize_model_text(text: str, allow_verdict: bool = False) -> str:
     """خطوط پرخطر مدل را حذف می‌کند (حکمِ بی‌ربط، تکرار سوال، پرحرفی)."""
     if not text:
@@ -137,7 +151,7 @@ def sanitize_model_text(text: str, allow_verdict: bool = False) -> str:
         # مدل روی سوال‌های غیرِ مجاز بودن هم «نتیجه» می‌سازد؛ این‌ها را نگه نمی‌داریم
         if any(m in stripped for m in drop_markers):
             continue
-        lines.append(stripped)
+        lines.append(_plain(stripped))
     out = "\n".join(lines).strip()
     return out[:900]
 
