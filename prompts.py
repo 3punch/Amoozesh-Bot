@@ -36,11 +36,6 @@ GREETING = (
     "• «ساختمان داده و الگوریتم‌ها با همامی چه زمانی ارائه شده؟»"
 )
 
-MODEL_DOWN = (
-    "مدل محلی الان در دسترس نیست. لطفاً چند دقیقه‌ی دیگر دوباره تلاش کنید."
-)
-
-
 def build_messages(query: str, context: str) -> list[dict]:
     return [
         {"role": "system", "content": SYSTEM_PROMPT.format(context=context)},

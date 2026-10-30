@@ -27,8 +27,9 @@ from telegram.ext import (
     filters,
 )
 
+import fallback
 import llm
-from prompts import FALLBACK_MESSAGE, GREETING, MODEL_DOWN, build_messages
+from prompts import FALLBACK_MESSAGE, GREETING, build_messages
 from retrieval import DataStore
 
 # خروجی UTF-8 بدون از دست رفتن بافر (مهم در ویندوز و لاگ‌های Actions)
@@ -39,6 +40,8 @@ except (AttributeError, ValueError):  # pragma: no cover
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 MAX_MESSAGE_LEN = 4000
+# چند دقیقه ربات بماند؛ صفر = اجرا تا وقتی متوقف شود (مفید برای اجرای دستی/محلی)
+RUN_DURATION_MINUTES = float(os.getenv("RUN_DURATION_MINUTES", "0") or 0)
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -122,18 +125,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         stats["professors"], stats["courses"],
     )
 
+    answer = ""
+    model_failed = False
     try:
         answer = await asyncio.to_thread(
             llm.generate, build_messages(user_text, context_text)
         )
     except llm.LLMError as exc:
         log.error("خطای مدل: %s", exc)
-        answer = MODEL_DOWN if "نصب نیست" in str(exc) or "Ollama" in str(exc) else FALLBACK_MESSAGE
+        model_failed = True
     except Exception:  # noqa: BLE001
-        log.exception("خطای پیش‌بینی‌نشده")
-        answer = FALLBACK_MESSAGE
+        log.exception("خطای پیش‌بینی‌نشدهٔ مدل")
+        model_failed = True
 
-    answer = (answer or "").strip() or FALLBACK_MESSAGE
+    answer = (answer or "").strip()
+    if not answer:
+        # مدل نبود/خطا داد/خالی جواب داد ⇒ پاسخ قطعی از خود دیتا (بدون تولید آزاد)
+        offline = fallback.answer(STORE, user_text)
+        if offline:
+            log.info("پاسخ قطعی (بدون مدل) ارسال شد.")
+            answer = offline + fallback.OFFLINE_NOTE
+        else:
+            log.error("مدل پاسخ نداد و پاسخی از دیتا هم ساخته نشد.")
+            answer = FALLBACK_MESSAGE
     try:
         await placeholder.delete()
     except TelegramError:
@@ -146,7 +160,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(FALLBACK_MESSAGE)
 
 
+async def auto_stop(app, minutes: float) -> None:
+    """بعد از مدت مشخص، polling را تمیز می‌بندد (برای چرخش بین runهای Actions)."""
+    await asyncio.sleep(minutes * 60)
+    log.info("زمان اجرای برنامه‌ریزی‌شده (%.0f دقیقه) تمام شد؛ خاموشی تمیز.", minutes)
+    await app.stop()
+
+
 async def on_startup(app) -> None:
+    if RUN_DURATION_MINUTES > 0:
+        app.create_task(auto_stop(app, RUN_DURATION_MINUTES))
+        log.info("این نمونه %.0f دقیقه اجرا می‌شود، سپس جایش را به run بعدی می‌دهد.",
+                 RUN_DURATION_MINUTES)
     if not llm.wait_for_server(timeout=120):
         log.error("سرویس Ollama در %s بالا نیامد.", llm.OLLAMA_HOST)
         return

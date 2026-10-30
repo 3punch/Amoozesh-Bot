@@ -1,0 +1,127 @@
+"""
+پاسخ‌دهی قطعی (بدون مدل).
+
+اگر مدل محلی بالا نیامد، پاسخ نداد یا خروجی خالی داد، ربات با همین ماژول از
+دیتای خود پروژه جواب می‌سازد تا کاربر هرگز بی‌جواب نماند و اطلاعات ساختگی نگیرد.
+
+همه‌ی اعداد و جمله‌ها مستقیماً از courses.xlsx / professors.txt / knowledge_base.txt
+خوانده می‌شوند؛ هیچ تولید متنی آزادی در کار نیست.
+"""
+
+from __future__ import annotations
+
+import re
+
+from retrieval import OPINION_MARKERS, QUESTION_MARKERS, prioritize_comments
+
+FORM_ITEM = {
+    "پیوستگی تدریس": r"پیوستگی و یکپارچگی تدریس:\s*(\d+)",
+    "تسلط": r"دانش عمومی و تسلط:\s*(\d+)",
+    "پاسخ‌گویی": r"پاسخگویی[^:]*:\s*(\d+)",
+    "انتقال مطالب": r"توانایی انتقال مطالب:\s*(\d+)",
+    "مدیریت کلاس": r"مدیریت کلاس[^:]*:\s*(\d+)",
+}
+FORM_TEXT = {
+    "نمره‌دهی": r"وضعیت نمره دادن:\s*[┘\s]*([^\n📄]+)",
+    "حضور و غیاب": r"حضور و غیاب\s*[┘\s]*([^\n📝✅]+)",
+    "کفایت منابع": r"منابع معرفی شده برای امتحان کافی است؟\s*[┘\s]*([^\n⭐]+)",
+    "توضیح دانشجو": r"توضیحات اضافه:\s*[┘\s]*([^\n➕]+)",
+}
+
+
+FA = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def _clean(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip(" .،:؛-").translate(FA)
+
+
+def _is_question(text: str) -> bool:
+    return any(m in text for m in QUESTION_MARKERS)
+
+
+def _best_comments(comments: list[str], limit: int = 3) -> list[str]:
+    """نظرهای دارای ارزیابی را جدا می‌کند؛ سوال‌های خالی را دور می‌ریزد."""
+    ranked = prioritize_comments(comments)
+    solid = [c for c in ranked if not _is_question(c) and any(m in c for m in OPINION_MARKERS)]
+    return (solid or [c for c in ranked if not _is_question(c)] or ranked)[:limit]
+
+
+def _find_form(comments: list[str]) -> str | None:
+    """نظر فرم‌مانند (استادشناسی) را برمی‌گرداند؛ کامل‌ترین مورد اولویت دارد."""
+    forms = [c for c in comments if "پیوستگی و یکپارچگی تدریس" in c]
+    return max(forms, key=len) if forms else None
+
+
+def professor_card(store, name: str) -> str | None:
+    """خلاصه‌ی ساختاریافته‌ی یک استاد از داده‌های آرشیو."""
+    prof = next(
+        (p for p in store.professors if p.norm_name == store.normalize(name)), None
+    )
+    if prof is None:
+        return None
+
+    lines = [f"«{prof.name}» — بر اساس {len(prof.comments)} پیام موجود در آرشیو:"]
+
+    form = _find_form(prof.comments)
+    scores: list[str] = []
+    if form:
+        for label, pattern in FORM_ITEM.items():
+            m = re.search(pattern, form)
+            if m:
+                scores.append(f"{label} {m.group(1).translate(FA)}/۱۰")
+        for label, pattern in FORM_TEXT.items():
+            m = re.search(pattern, form)
+            if m:
+                value = _clean(m.group(1))
+                if value and len(value) < 120:
+                    lines.append(f"• {label}: {value}")
+    if scores:
+        lines.append("• امتیازهای فرم استادشناسی: " + "، ".join(scores))
+
+    if len(lines) == 1:
+        picks = _best_comments(prof.comments, 3)
+        for c in picks:
+            short = c if len(c) <= 200 else c[:200] + "…"
+            lines.append(f"• {_clean(short)}")
+        has_opinion = any(
+            not _is_question(c) and any(m in c for m in OPINION_MARKERS)
+            for c in prof.comments
+        )
+        if picks and not has_opinion:
+            lines.append("(پیام‌های آرشیو درباره‌ی این استاد بیشتر سوال است؛ ارزیابی ثبت نشده.)")
+
+    courses = store.courses_for_professor(prof.name)
+    if courses:
+        lines.append("")
+        lines.append("📚 ارائه‌ی این ترم:")
+        lines.extend(f"• {c}" for c in courses)
+    return "\n".join(lines)
+
+
+def answer(store, query: str, want_model: bool = True) -> str | None:
+    """پاسخ قطعی برای سوال، یا None اگر چیزی برای گفتن نبود."""
+    verdict = store.check_eligibility(query)
+    if verdict:
+        text = verdict.split("←", 1)[-1].strip()
+        return f"نتیجه: {text}"
+
+    kws = store.keywords(query)
+    matches = store.match_professors(kws) if kws else []
+    named = [p.name for p, is_named in matches if is_named]
+    if named:
+        cards = [c for c in (professor_card(store, n) for n in named[:1]) if c]
+        if cards:
+            return "\n\n".join(cards)
+
+    courses = store.match_courses(kws)
+    if courses:
+        text = "\n".join(
+            f"• {store.format_course_row(r).lstrip('- ')}" for r in courses[:5]
+        )
+        return "📚 دروس پیدا‌شده در ارائه‌ی این ترم:\n" + text
+
+    return None
+
+
+OFFLINE_NOTE = "\n\n_(مدل محلی در دسترس نبود؛ این پاسخ مستقیم از داده‌های پروژه ساخته شد.)_"

@@ -198,6 +198,30 @@ def test_prompts():
     check("متن خالی", bot.split_message("") == [])
 
 
+# ---------------------------------------------------------------- 3.5) fallback
+
+def test_fallback():
+    print("\n[۳.۵] پاسخ قطعی بدون مدل (fallback)")
+    import fallback
+    from retrieval import DataStore
+
+    store = DataStore(".")
+
+    verdict = fallback.answer(store, "بهینه سازی خطی برای ورودی ۱۴۰۴ مجازه؟")
+    check("حکم مجاز بودن بدون مدل", verdict and "مجاز نیست" in verdict, str(verdict))
+
+    card = fallback.answer(store, "استاد آذر ابوالقاسمی چطور استادی هستن")
+    check("کارت استاد ساخته شد", card and "آذر ابوالقاسمی" in card)
+    check("نمره‌دهی از فرم استخراج شد", "ارفاق" in card, card[:80])
+    check("امتیازهای فرم استخراج شد", "۱۰/۱۰" in card)
+    check("درس این ترم اضافه شد", "مبانی کارآفرینی" in card)
+
+    course = fallback.answer(store, "ساختمان داده و الگوریتم ها")
+    check("فهرست دروس بدون مدل", course and "ساختمان داده" in course)
+
+    check("سوال بی‌ربط ⇒ None", fallback.answer(store, "سلام") is None)
+
+
 # ---------------------------------------------------------------- 4) end-to-end
 
 class FakeChat:
@@ -268,11 +292,20 @@ def test_end_to_end():
     check("پاسخ ارسال شد", msg.answers == ["نتیجه: مجاز است ✅"], str(msg.sent))
     check("پیام «در حال بررسی…» پاک شد", msg.placeholders[0].deleted == 1)
 
-    # خطای مدل → پیام مشخص برای کاربر
+    # خطای مدل ⇒ پاسخ قطعی از خود دیتا (بدون تولید آزاد)
     msg2 = FakeMessage("استاد ایزدیخواه چطوره؟")
     llm.generate = lambda *a, **kw: (_ for _ in ()).throw(llm.LLMError("Ollama قطع است"))
     asyncio.run(bot.handle_message(types.SimpleNamespace(message=msg2), context))
-    check("خطای مدل به کاربر گفته شد", "در دسترس نیست" in msg2.answers[-1], str(msg2.sent))
+    off = msg2.answers[-1]
+    check("بدون مدل، پاسخ از داده‌های پروژه ساخته شد", "ایزدیخواه" in off and "ارائه‌ی این ترم" in off, off[:80])
+    check("به کاربر گفته شد که مدل نبود", "مدل محلی در دسترس نبود" in off)
+    check("پاسخ کوتاه و قابل ارسال است", len(off) < 4000, str(len(off)))
+
+    # خطای مدل و سوال بی‌ربط ⇒ پیام راهنما (نه سکوت)
+    msg5 = FakeMessage("سیب زمینی چند؟")
+    asyncio.run(bot.handle_message(types.SimpleNamespace(message=msg5), context))
+    check("سوال بی‌ربط بدون مدل پیام راهنما گرفت", msg5.answers and "نتوانستم" in msg5.answers[-1],
+          str(msg5.answers))
 
     # در گروه، بدون منشن و بدون ریپلای، جواب نمی‌دهد
     msg3 = FakeMessage("سلام بچه‌ها")
@@ -292,6 +325,7 @@ if __name__ == "__main__":
     test_retrieval()
     test_llm_client()
     test_prompts()
+    test_fallback()
     test_end_to_end()
     print("\n" + ("✅ همه تست‌ها پاس شد." if not FAILS else f"❌ {len(FAILS)} تست ناموفق: {FAILS}"))
     sys.exit(1 if FAILS else 0)

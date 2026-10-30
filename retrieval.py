@@ -370,6 +370,44 @@ class DataStore:
         snippet = "\n".join(lines)
         return snippet[:MAX_CURRICULUM_CHARS]
 
+    # ---------- API عمومی (برای fallback بدون مدل)
+
+    @staticmethod
+    def normalize(text: str) -> str:
+        return normalize(text)
+
+    @staticmethod
+    def keywords(text: str) -> list[str]:
+        return keywords(text)
+
+    def match_professors(self, kws: list[str]) -> list[tuple[Professor, bool]]:
+        profs, named = self._top_professors(kws, MAX_PROFESSOR_BLOCKS)
+        return [(p, named) for p in profs]
+
+    def match_courses(self, kws: list[str]) -> list[pd.Series]:
+        return self._top_courses(kws, MAX_COURSE_ROWS)
+
+    @staticmethod
+    def format_course_row(row: pd.Series) -> str:
+        return DataStore._format_course(row)
+
+    def courses_for_professor(self, name: str) -> list[str]:
+        """درس‌های این ترم که این استاد ارائه می‌دهد (برای پاسخ بدون مدل)."""
+        if self.courses is None:
+            return []
+        target = normalize(name)
+        rows = self.courses[
+            self.courses.get("استاد", "").astype(str).map(normalize) == target
+        ]
+        if rows.empty:
+            # تطابق نسبی (مثلاً بخشی از نام)
+            rows = self.courses[
+                self.courses.get("استاد", "").astype(str).map(
+                    lambda v: target in normalize(v) or normalize(v) in target
+                )
+            ]
+        return [self._format_course(r).lstrip("- ") for _, r in rows.head(6).iterrows()]
+
     # ---------- قالب‌بندی
 
     @staticmethod
