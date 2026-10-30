@@ -256,6 +256,34 @@ def test_fallback():
           miss and "پیدا نکردم" in miss and "روش تحقیق" not in miss, str(miss)[:120])
     check("ارقام پرسش در پاسخ فارسی شد", miss and "۱۴۰۴" in miss, str(miss)[:80])
 
+    # --- مقایسه‌ی دو استاد (پرسش «فلانی یا فلانی؟»)
+    cmp = fallback.answer(store, "غلامیان یا تهرانیان؟")
+    check("پرسش مقایسه ⇒ پاسخ مقایسه‌ای", cmp and cmp.startswith("⚖️"), str(cmp)[:80])
+    check("مقایسه به نتیجه می‌رسد", cmp and "🎯 نتیجه:" in cmp and "غلامیان" in cmp)
+    check("ترتیب پرسش در مقایسه حفظ شد",
+          cmp and cmp.index("محمد غلامیان") < cmp.index("ابوالفضل تهرانیان"), str(cmp)[:120])
+    check("مقایسه رأی مستقیم آرشیو را نشان می‌دهد",
+          cmp and "مقایسه‌های مستقیم" in cmp, str(cmp)[:200])
+    # همان قاعده‌ی ضدکپی، برای پاسخ مقایسه‌ای هم برقرار است
+    gholamian = next(x for x in store.professors if "غلامیان" in x.norm_name)
+    leaked = [c[:60] for c in gholamian.comments if len(c) > 60 and c[:60] in (cmp or "")]
+    check("مقایسه هم پیام آرشیو را کپی نمی‌کند", not leaked, str(leaked[:1]))
+
+    # --- وقتی فقط یکی از دو استاد داده دارد، صریح گفته می‌شود
+    uneven = fallback.answer(store, "همامی یا رحیم")
+    check("مقایسه‌ی نامتوازن صادق است",
+          uneven and "ارزیابی روشنی نیست" in uneven, str(uneven)[:160])
+
+    # --- نسبت‌دادن هر بند پیام به استاد خودش (نه به صاحب شناسنامه)
+    keys = fallback._name_keys(store)
+    mixed = fallback._attributed(
+        "غلامیان درست تر نمره میده ولی تهرانیان تاس میندازه",
+        keys, "سهیلا دهقان چناری",
+    )
+    check("بند مثبت به غلامیان و بند منفی به تهرانیان رسید",
+          mixed.get("محمد غلامیان", 0) > 0 and mixed.get("ابوالفضل تهرانیان", 0) < 0,
+          str(mixed))
+
     # --- نگهبان ضدتوهم با خروجی واقعی gemma3:4b (تست رگرسیون)
     ctx_time, _ = store.build_context(
         "ساختمان داده و الگوریتم ها برای ورودی ۱۴۰۴ با همامی چه زمانی ارائه شده؟"
