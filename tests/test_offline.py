@@ -29,7 +29,7 @@ def check(name, cond, detail=""):
 
 def test_retrieval():
     print("\n[۱] لایه‌ی بازیابی (retrieval)")
-    from retrieval import DataStore, estimate_tokens, keywords, normalize
+    from retrieval import DataStore, estimate_tokens, keywords, normalize, prioritize_comments
 
     store = DataStore(".")
     check("جدول دروس بارگذاری شد", store.courses is not None and len(store.courses) > 50)
@@ -57,6 +57,31 @@ def test_retrieval():
             check(f"شناسنامه‌ی {expect} آورده شد", expect in ctx and "نظرات دانشجویان" in ctx)
         else:
             check(f"شناسنامه‌ی بی‌ربط حذف شد ({short_q})", "نظرات دانشجویان" not in ctx)
+    print("\n  [تمیزکاری نظرات (رگرسیون: استاد آذر ابوالقاسمی)]")
+    prof = next((p for p in store.professors if "ابوالقاسمی" in p.norm_name), None)
+    check("شناسنامه‌ی آذر ابوالقاسمی پیدا شد", prof is not None)
+    if prof:
+        check("پیام‌های لینکی حذف شدند", prof.dropped_comments >= 1, f"{prof.dropped_comments}")
+        check("نظر مفید ثبت شده", len(prof.comments) >= 5, f"{len(prof.comments)}")
+        joined = " ".join(prof.comments)
+        check("تبلیغ ربات/کانال حذف شد", "tahqiqat_bot" not in joined and "@unni_news" not in joined)
+        check("لینک‌های t.me حذف شدند", "t.me/" not in joined)
+        top = " ".join(prioritize_comments(prof.comments)[:3])
+        check("ارزیابی واقعی در صدر نظرات است",
+              any(w in top for w in ("نمره", "ارفاق", "استاد خوبی", "اره", "اکی", "حضور")), top[:80])
+
+    q_prof = "استاد آذر ابوالقاسمی چطور استادی هستن"
+    ctx, st = store.build_context(q_prof)
+    check("برای سوال استادشناسی، قوانین ورودی‌ها حذف شد", "قوانین ورودی‌ها" not in ctx)
+    check("دروس خود استاد آورده شد", "مبانی کارآفرینی" in ctx)
+    check("ارزیابی واقعی به مدل می‌رسد", "ارفاق" in ctx or "استاد خوبی" in ctx)
+    check("پرامپت کل کوچک است", st["tokens"] < 900, f"~{st['tokens']} توکن")
+    check("کلیدواژه‌های پوچ حذف شدند", "استادی" not in st["keywords"] and "هستن" not in st["keywords"])
+
+    q_course = "بهینه سازی خطی برای ورودی ۱۴۰۳ مجازه؟"
+    ctx2, st2 = store.build_context(q_course)
+    check("برای سوال مجاز بودن، قوانین ورودی‌ها حاضر است", "قوانین ورودی‌ها" in ctx2)
+
     print("\n  [بررسی قطعی مجاز بودن درس]")
     truth = [
         ("آیا بهینه سازی خطی برای ورودی ۱۴۰۲ مجازه؟", "مجاز نیست"),

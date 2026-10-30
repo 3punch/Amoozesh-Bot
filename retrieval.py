@@ -39,7 +39,8 @@ STOPWORDS = set(
     چطوره چطور چطوری خوبه خوب بد چیه نیست هستش داشتم داشته بگیرم بردارم اخذ اخذش
     واحد واحده واحدم چند چندتا کجا کِی کی چرا آیا میخوام می‌خوام میخواستم میشه
     یکی یه یه‌کم خیلی بچه بچه‌ها بچه ها دوستان کسی کسی‌ میدونه می‌دونه بدونم بگین
-    اطلاعات راهنمایی کمک لطفاً دوست داشتم داشتید دارید کردم کردم کدام""".split()
+    اطلاعات راهنمایی کمک لطفاً دوست داشتم داشتید دارید کردم کردم کدام
+    استادی استادیه استادش هستن هستید چجور چجوری بگی بگه ریاضی کسی بچه""".split()
 )
 
 
@@ -79,6 +80,72 @@ class Professor:
     norm_name: str
     body: str
     norm_body: str
+    comments: list[str] = field(default_factory=list)
+    dropped_comments: int = 0
+
+
+LINK_RE = re.compile(r"(?:https?://|t\.me/)\S+")
+
+
+def is_link_spam(text: str) -> bool:
+    """پیام‌هایی که فهرست لینک گروه/کانال‌اند و ارزش اطلاعاتی ندارند."""
+    links = LINK_RE.findall(text)
+    if not links:
+        return False
+    # دو لینک یا بیشتر ⇒ قطعاً «لیست لینک» است، نه ارزیابی استاد
+    if len(links) >= 2:
+        return True
+    stripped = LINK_RE.sub(" ", text)
+    words = [w for w in re.sub(r"[^\w\s]", " ", stripped).split() if len(w) > 2]
+    return len(" ".join(words)) < 60
+
+
+def clean_comments(body: str) -> tuple[list[str], int]:
+    """نظرات مفید را جدا می‌کند؛ خروجی: (نظرات، تعداد پیام‌های حذف‌شده)."""
+    kept: list[str] = []
+    dropped = 0
+    for line in body.splitlines():
+        m = re.match(r"^\s*\d+\.\s*(.*)$", line)
+        text = (m.group(1) if m else line).strip()
+        if not text or set(text) <= {"=", " "} or text == "نظر مفیدی ثبت نشده است.":
+            continue
+        if is_link_spam(text):
+            dropped += 1
+            continue
+        # حذف تبلیغ ربات/کانال که انتهای فرم‌های استادشناسی چسبیده است
+        text = re.split(r"برای ارسال فرم|@tahqiqat_bot|کانال استاد شناسی", text)[0]
+        text = re.sub(r"\s{2,}", " ", LINK_RE.sub("", text)).strip()
+        text = re.sub(r"[📣🤖🔗🆔]+\s*$", "", text).strip()
+        text = re.sub(r"[-–—=]{3,}", " ", text).strip()
+        if len(text) < 15:
+            dropped += 1
+            continue
+        if text not in kept:
+            kept.append(text)
+    return kept, dropped
+
+
+OPINION_MARKERS = (
+    "راحت", "سخت", "نمره", "حضور", "غیاب", "امتحان", "میان‌ترم", "میانترم", "پایان‌ترم",
+    "جزوه", "تدریس", "اکی", "اوکی", "عالی", "خوب", "بد ", "افتضاح", "پاس", "تشریحی",
+    "تست", "پیشنهاد", "تعریف", "گیر", "سختگیر", "منصف", "واقعا", "بنظرم", "به نظر",
+    "تجربه", "داشتم", "برداشتم", "ارائه", "حذف", "اضافه", "نمره‌دهی", "تصحیح",
+)
+QUESTION_MARKERS = ("؟", "?", "چجور", "چطور", "کسی", "چیه", "میدونه", "می‌دونه", "داره")
+
+
+def prioritize_comments(comments: list[str]) -> list[str]:
+    """نظرات حاوی ارزیابی واقعی را بالا می‌آورد؛ سوال‌های خالی را پایین."""
+    def score(text: str) -> int:
+        t = text.lower()
+        pts = sum(2 for m in OPINION_MARKERS if m in t)
+        if any(qm in t for qm in QUESTION_MARKERS):
+            pts -= 3
+        if len(t) > 40:
+            pts += 1
+        return pts
+
+    return sorted(comments, key=score, reverse=True)
 
 
 @dataclass
@@ -137,11 +204,26 @@ class DataStore:
             blocks = [(f"بلوک {i + 1}", b.strip())
                       for i, b in enumerate(raw.split("\n---\n")) if b.strip()]
 
-        self.professors = [
-            Professor(name=name, norm_name=normalize(name), body=body, norm_body=normalize(body))
-            for name, body in blocks
-        ]
-        self.log.append(f"✅ {len(self.professors)} شناسنامه‌ی استاد بارگذاری شد.")
+        self.professors = []
+        total_dropped = 0
+        for name, body in blocks:
+            comments, dropped = clean_comments(body)
+            total_dropped += dropped
+            clean_body = "\n".join(comments) if comments else "نظر مفیدی ثبت نشده است."
+            self.professors.append(
+                Professor(
+                    name=name,
+                    norm_name=normalize(name),
+                    body=clean_body,
+                    norm_body=normalize(clean_body),
+                    comments=comments,
+                    dropped_comments=dropped,
+                )
+            )
+        self.log.append(
+            f"✅ {len(self.professors)} شناسنامه‌ی استاد بارگذاری شد "
+            f"({total_dropped} پیام لینکی/تکراری حذف شد)."
+        )
 
     def _load_curriculum(self) -> None:
         try:
@@ -190,9 +272,7 @@ class DataStore:
         if named:
             best_name = named[0][0]
             named = [s for s in named if s[0] >= max(12, best_name * 0.6)]
-            others = sorted((s for s in scored if s[0] == 0), key=lambda x: x[1], reverse=True)
-            if others and others[0][1] >= 4:
-                named.append(others[0])
+            # بلوک‌هایی که فقط «در ضمن» اسم استاد را دارند (مثل فهرست لینک) حذف می‌شوند
             return [p for _, _, p in named[:limit]], True
 
         scored.sort(key=lambda x: x[1], reverse=True)
@@ -242,6 +322,13 @@ class DataStore:
                 course = normalize(line.split(" - ")[0])
                 if course:
                     self.entry_rules.setdefault(course, set()).add(current_year)
+
+    @staticmethod
+    def _needs_knowledge(query: str) -> bool:
+        nq = normalize(query)
+        if re.search(r"\b140[0-9]\b", nq):
+            return True
+        return any(w in nq for w in ("ورودی", "مجاز", "محدودیت", "ظرفیت", "قابل اخذ", "پیش نیاز"))
 
     def check_eligibility(self, query: str) -> str:
         """اگر سوال «آیا درس X برای ورودی Y مجاز است؟» باشد، پاسخ قطعی را برمی‌گرداند."""
@@ -325,7 +412,9 @@ class DataStore:
 
         sections: list[tuple[str, str]] = []
 
-        if self.knowledge:
+        # قوانین ورودی‌ها فقط وقتی مربوط است که سوال درباره‌ی مجاز بودن/ورودی باشد؛
+        # در سوال «استادشناسی» فقط نویز و مصرف توکن است.
+        if self.knowledge and self._needs_knowledge(query):
             sections.append(("قوانین ورودی‌ها و مجاز بودن دروس", self.knowledge))
 
         verdict = self.check_eligibility(query)
@@ -343,10 +432,17 @@ class DataStore:
         if profs:
             blocks = []
             for p in profs:
-                body = p.body
+                ordered = prioritize_comments(p.comments) or [p.body]
+                body = "\n".join(ordered)
                 if len(body) > MAX_PROF_BLOCK_CHARS:
                     body = body[:MAX_PROF_BLOCK_CHARS].rstrip() + " ..."
-                blocks.append(f"«{p.name}»:\n{body}")
+                note = ""
+                if not p.comments:
+                    note = ("\n(در آرشیو فقط سوال/لینک درباره‌ی این استاد بوده و "
+                            "ارزیابی واقعی دانشجویی ثبت نشده است.)")
+                blocks.append(
+                    f"«{p.name}» (تعداد نظر مفید: {len(p.comments)}):\n{body}{note}"
+                )
             sections.append(("نظرات دانشجویان درباره استاد(های) سوال", "\n\n".join(blocks)))
 
         if curriculum:
@@ -372,7 +468,7 @@ class DataStore:
         stats = {
             "verdict": verdict,
             "keywords": kws,
-            "professors": [p.name for p in profs],
+            "professors": {p.name: len(p.comments) for p in profs},
             "courses": len(courses),
             "has_curriculum": bool(curriculum),
             "chars": len(context),
