@@ -2,4 +2,4 @@ pandas
 openpyxl
 pypdf
 requests
-python-telegram-bot
+python-telegram-bot>=21.0
