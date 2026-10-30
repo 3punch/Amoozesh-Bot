@@ -30,8 +30,9 @@ jobs:
       # Qwen2.5:7b: فارسی بهتر از Gemma، بدون حالت استدلال (سریع‌تر از Qwen3).
       # مقایسه‌ی واقعی: reports/model-bench.md
       MODEL_NAME: qwen2.5:7b
-      # جمع‌بندی مدل به پاسخ اضافه نشود: پاسخ قطعی فوری و درست است و
-      # جمع‌بندی مدل روی CPU ۲ تا ۴ دقیقه طول می‌کشد. برای روشن‌کردن: "1"
+      # "0" = پاسخ فوری از داده‌های قطعی، بدون نصب Ollama و بدون دانلود مدل.
+      # "1" = یک جمع‌بندی کوتاه مدل هم اضافه شود (نصب Ollama + ~۵ گیگ مدل،
+      #        و ۲ تا ۴ دقیقه انتظار برای هر پاسخ).
       MODEL_SUMMARY: "0"
       THINK: "0"
       OLLAMA_HOST: http://127.0.0.1:11434
@@ -39,7 +40,7 @@ jobs:
       OLLAMA_NUM_PARALLEL: "1"
       NUM_CTX: "3072"
       MAX_TOKENS: "120"
-      MAX_CONTEXT_CHARS: "6000"
+      MAX_CONTEXT_CHARS: "4000"
       BOT_RUN_MINUTES: "320"      # هر نمونه ۵ ساعت و ۲۰ دقیقه
       BOT_JOB_MINUTES: "335"      # کل job حداکثر ۵ ساعت و ۳۵ دقیقه
 
@@ -60,6 +61,7 @@ jobs:
 
       # وزن‌های مدل کش می‌شوند تا هر بار ۳.۳ گیگ دانلود نشود
       - name: Cache Ollama models
+        if: env.MODEL_SUMMARY == '1'
         uses: actions/cache@v4
         with:
           path: ~/.ollama/models
@@ -68,11 +70,13 @@ jobs:
             ollama-models-
 
       - name: Install Ollama
+        if: env.MODEL_SUMMARY == '1'
         run: |
           curl -fsSL https://ollama.com/install.sh | sh
           ollama --version
 
       - name: Start Ollama server
+        if: env.MODEL_SUMMARY == '1'
         run: |
           mkdir -p ~/.ollama
           nohup ollama serve > /tmp/ollama.log 2>&1 &
@@ -85,11 +89,13 @@ jobs:
           echo "Ollama did not start"; tail -50 /tmp/ollama.log; exit 1
 
       - name: Pull model
+        if: env.MODEL_SUMMARY == '1'
         run: |
           ollama pull "$MODEL_NAME"
           ollama list
 
       - name: Warm up model
+        if: env.MODEL_SUMMARY == '1'
         run: |
           curl -fsS "$OLLAMA_HOST/api/generate" \
             -d "{\"model\":\"$MODEL_NAME\",\"prompt\":\"سلام\",\"stream\":false,\"options\":{\"num_predict\":8}}" \
@@ -114,5 +120,6 @@ jobs:
         run: bash scripts/run_bot.sh
 
       - name: Show Ollama log
+        if: env.MODEL_SUMMARY == '1'
         if: always()
         run: tail -50 /tmp/ollama.log || true

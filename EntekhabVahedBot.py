@@ -203,6 +203,10 @@ async def auto_stop(app, minutes: float) -> None:
 
 
 async def on_startup(app) -> None:
+    if not MODEL_SUMMARY:
+        log.info("MODEL_SUMMARY=0 ⇒ پاسخ‌ها از داده‌های قطعی ساخته می‌شوند؛ "
+                 "نیازی به Ollama نیست.")
+        return
     if RUN_DURATION_MINUTES > 0:
         app.create_task(auto_stop(app, RUN_DURATION_MINUTES))
         log.info("این نمونه %.0f دقیقه اجرا می‌شود، سپس جایش را به run بعدی می‌دهد.",
