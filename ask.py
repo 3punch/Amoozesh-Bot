@@ -41,6 +41,7 @@ def main() -> int:
     }
 
     result["verified"] = None
+    result["speed"] = None
 
     if not args.context:
         if not llm.wait_for_server(timeout=20):
@@ -57,6 +58,7 @@ def main() -> int:
                 result["verified"] = ok
                 result["verify_reason"] = why
                 result["answer"] = text if ok else None
+                result["speed"] = dict(llm.LAST_STATS)
                 if not ok:
                     result["rejected_model_text"] = text
             except llm.LLMError as exc:
@@ -78,6 +80,11 @@ def main() -> int:
     if result["facts"]:
         print("\n" + "=" * 60 + "\n📋 پاسخ قطعی ربات (بدون مدل):\n" + "=" * 60)
         print(result["facts"])
+    if result["speed"]:
+        sp = result["speed"]
+        print(f"\n⏱️ {sp.get('model')}: {sp.get('duration_s')}s | "
+              f"{sp.get('eval_count')} توکن تولید | {sp.get('tok_per_s')} توکن/ثانیه | "
+              f"زمینه {sp.get('prompt_eval_count')} توکن")
     if result["answer"]:
         print("\n" + "=" * 60 + f"\n🤖 جمع‌بندی {llm.MODEL_NAME} (تأییدشده):\n" + "=" * 60)
         print(result["answer"])

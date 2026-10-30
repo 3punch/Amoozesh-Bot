@@ -5,7 +5,8 @@
 (پیش‌فرض http://127.0.0.1:11434) صدا زده می‌شود. هیچ API key ای لازم نیست.
 
 متغیرهای محیطی:
-    MODEL_NAME     نام مدل در Ollama            (پیش‌فرض: gemma3:4b)
+    MODEL_NAME     نام مدل در Ollama            (پیش‌فرض: qwen3:4b)
+    THINK          حالت استدلال مدل‌های Qwen3    (۰ = خاموش، پیش‌فرض)
     OLLAMA_HOST    آدرس سرویس Ollama            (پیش‌فرض: http://127.0.0.1:11434)
     NUM_CTX        اندازه پنجره‌ی زمینه          (پیش‌فرض: 8192)
     MAX_TOKENS     حداکثر توکن پاسخ              (پیش‌فرض: 320)
@@ -21,13 +22,19 @@ import time
 
 import requests
 
-MODEL_NAME = os.getenv("MODEL_NAME", "gemma3:4b")
+MODEL_NAME = os.getenv("MODEL_NAME", "qwen3:4b")
+# مدل‌های Qwen3 به‌طور پیش‌فرض «فکر کردن» طولانی دارند که برای پاسخ کوتاه
+# فارسی فقط تأخیر تولید می‌کند؛ خاموشش می‌کنیم.
+THINK = os.getenv("THINK", "0") == "1"
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 NUM_CTX = int(os.getenv("NUM_CTX", "8192"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "320"))
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.2"))
 LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "300"))
 KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "6h")
+
+# آخرین آمار پاسخ (برای لاگ و اندازه‌گیری سرعت)
+LAST_STATS: dict = {}
 
 
 class LLMError(RuntimeError):
@@ -92,6 +99,7 @@ def generate(
         "messages": messages,
         "stream": False,
         "keep_alive": KEEP_ALIVE,
+        "think": THINK,
         "options": _options(max_tokens, temperature),
     }
     url = f"{OLLAMA_HOST}/api/chat"
@@ -116,6 +124,21 @@ def generate(
         raise LLMError("پاسخ Ollama قابل خواندن نبود.") from exc
 
     content = (data.get("message") or {}).get("content", "").strip()
+    LAST_STATS.clear()
+    LAST_STATS.update(
+        {
+            "model": data.get("model", MODEL_NAME),
+            "eval_count": data.get("eval_count", 0),
+            "prompt_eval_count": data.get("prompt_eval_count", 0),
+            "duration_s": round(data.get("total_duration", 0) / 1e9, 2),
+            "tok_per_s": round(
+                (data.get("eval_count", 0) or 0)
+                / max(data.get("eval_duration", 1) / 1e9, 0.001),
+                1,
+            ),
+            "thinking": bool((data.get("message") or {}).get("thinking")),
+        }
+    )
     if not content:
         raise LLMError("مدل پاسخ خالی برگرداند.")
 

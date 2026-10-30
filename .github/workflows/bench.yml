@@ -1,0 +1,90 @@
+name: Benchmark Models
+
+# مقایسه‌ی چند مدل Ollama روی سوال‌های واقعی پروژه، با ثبت زمان و کیفیت.
+# Actions → Benchmark Models → Run workflow  (لیست مدل‌ها را با کاما بده)
+# گزارش در reports/model-bench.md کامیت می‌شود.
+
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: 'مدل‌ها با کاما جدا شوند'
+        required: false
+        default: 'qwen3:4b,qwen3:8b,qwen2.5:7b'
+  push:
+    paths:
+      - 'bench.py'
+      - '.github/workflows/bench.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OLLAMA_HOST: http://127.0.0.1:11434
+      OLLAMA_KEEP_ALIVE: 30m
+      THINK: "0"
+      NUM_CTX: "4096"
+      MAX_TOKENS: "160"
+      MAX_CONTEXT_CHARS: "6000"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: pip
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-bench-${{ github.run_id }}
+          restore-keys: |
+            ollama-bench-
+            ollama-models-
+
+      - name: Install and start Ollama
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 https://ollama.com/install.sh | sh
+          nohup ollama serve > /tmp/ollama.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -fsS "$OLLAMA_HOST/api/tags" > /dev/null && break
+            sleep 2
+          done
+
+      - name: Run benchmark
+        env:
+          MODELS: ${{ inputs.models || 'qwen3:4b,qwen3:8b,qwen2.5:7b' }}
+        run: |
+          IFS=',' read -ra list <<< "$MODELS"
+          python bench.py --models "${list[@]}" --report reports/model-bench.md
+
+      - name: Commit report
+        run: |
+          git config user.name "bench-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -f reports/model-bench.md
+          if git diff --cached --quiet; then
+            echo "گزارش تغییری نداشت."
+          else
+            git commit -m "chore: model benchmark report [skip ci]"
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && git push && break
+              sleep 5
+            done
+          fi
+
+      - name: Show Ollama log
+        if: always()
+        run: tail -40 /tmp/ollama.log || true
