@@ -120,6 +120,5 @@ jobs:
         run: bash scripts/run_bot.sh
 
       - name: Show Ollama log
-        if: env.MODEL_SUMMARY == '1'
-        if: always()
+        if: always() && env.MODEL_SUMMARY == '1'
         run: tail -50 /tmp/ollama.log || true
