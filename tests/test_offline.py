@@ -592,6 +592,20 @@ def test_deep_end_to_end():
     analysis = ("نتیجه: غلامیان انتخاب کم‌ریسک‌تری است.\n"
                 "• درست‌تر نمره می‌دهد.\n"
                 "• تهرانیان بیشتر نقد شده است.")
+    import tempfile
+
+    import api_llm
+    import quota
+
+    old_api_key = api_llm.API_KEY
+    old_quota = bot.QUOTA
+    old_model_ready = bot.MODEL_READY
+    # کلید واقعی و شمارنده‌ی واقعی را کنار می‌گذاریم تا نتیجه به محیط وابسته نباشد
+    api_llm.API_KEY = ""
+    bot.QUOTA = quota.QuotaStore(
+        path=os.path.join(tempfile.mkdtemp(prefix="quota-flow-"), "quotas.json"),
+        persist_remote=False,
+    )
     try:
         llm.generate = lambda messages, **kw: analysis
 
@@ -668,10 +682,23 @@ def test_deep_end_to_end():
         off_text = msg_off.placeholders[-1].text
         check("‎/deep بدون مدل پاسخ سریع می‌دهد",
               "حالت مدل روی این اجرا فعال نیست" in off_text, off_text[:60])
+
+        # ۸) مدل خاموش ولی API روشن ⇒ فقط دکمه‌ی ⚡ (بدون مدل هم API کار می‌کند)
+        api_llm.API_KEY = "test-key"
+        msg_api_only = KeyedMessage("استاد ابوالقاسمی")
+        asyncio.run(bot.handle_message(types.SimpleNamespace(message=msg_api_only), ctx))
+        only = msg_api_only.placeholders[-1].kwargs.get("reply_markup")
+        rows = only.inline_keyboard if only else []
+        check("مدل خاموش + API روشن ⇒ فقط دکمه‌ی API",
+              len(rows) == 1 and rows[0][0].callback_data.startswith("api:"),
+              str([[b.text for b in row] for row in rows]))
+        api_llm.API_KEY = ""
         check("‎/deep بدون مدل داده را هم می‌آورد", "ابوالقاسمی" in off_text)
     finally:
         llm.generate = original
-        bot.MODEL_READY = False
+        api_llm.API_KEY = old_api_key
+        bot.QUOTA = old_quota
+        bot.MODEL_READY = old_model_ready
 
 
 
@@ -869,14 +896,21 @@ def test_quota():
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "quotas.json")
         today = quota.today_key()
-        remote = FakeRemote({today: {"33": {"deep": 2}}})
-        store = quota.QuotaStore(path=path, remote=remote, persist_remote=True)
-        store.sync()
-        check("سهمیه‌ی گیت‌هاب خوانده شد", store.remaining(33, "deep") == 1,
-              str(store.remaining(33, "deep")))
-        store.consume(33, "deep")
-        check("شمارنده‌ی محلی جلوتر از ریموت نگه داشته می‌شود",
-              store.remaining(33, "deep") == 0)
+        # کلید خاموش‌کننده‌ی محیطی (QUOTA_PERSIST=0) را برای این دو بررسی
+        # موقتاً روشن می‌کنیم تا رفتار «همگام با ریموت» واقعاً سنجیده شود.
+        old_persist = quota.PERSIST
+        quota.PERSIST = True
+        try:
+            remote = FakeRemote({today: {"33": {"deep": 2}}})
+            store = quota.QuotaStore(path=path, remote=remote, persist_remote=True)
+            store.sync()
+            check("سهمیه‌ی گیت‌هاب خوانده شد", store.remaining(33, "deep") == 1,
+                  str(store.remaining(33, "deep")))
+            store.consume(33, "deep")
+            check("شمارنده‌ی محلی جلوتر از ریموت نگه داشته می‌شود",
+                  store.remaining(33, "deep") == 0)
+        finally:
+            quota.PERSIST = old_persist
 
 
 # ---------------------------------------------------------------- 3.95) سهمیه در ربات
@@ -1016,7 +1050,28 @@ def test_golden_eval():
           not mod.score_case({"id": "z", "entities": ["غلامیان"],
                               "forbid": ["بهتر است"]}, ok_result)["passed"])
 
+def isolate_environment() -> None:
+    """تست‌ها نباید به کلید API واقعی یا سهمیه‌ی واقعی وابسته باشند.
+
+    روی runner گیت‌هاب، secret ممکن است وجود داشته باشد و `.state/` هم بین
+    اجراها بماند؛ آن وقت نتیجه‌ی تست به محیط بستگی پیدا می‌کند نه به کد.
+    """
+    import tempfile
+
+    os.environ.pop("API_KEY", None)
+    os.environ.pop("OPENROUTER_API_KEY", None)
+    os.environ["QUOTA_PERSIST"] = "0"
+    os.environ.pop("GITHUB_TOKEN", None)
+    os.environ.pop("GITHUB_REPOSITORY", None)
+    import quota
+
+    quota.PERSIST = False
+    quota.STATE_PATH = os.path.join(tempfile.mkdtemp(prefix="quota-test-"), "quotas.json")
+    quota.STATE_FILE = quota.STATE_PATH
+
+
 if __name__ == "__main__":
+    isolate_environment()
     test_retrieval()
     test_llm_client()
     test_prompts()
