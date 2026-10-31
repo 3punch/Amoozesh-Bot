@@ -34,9 +34,11 @@ from telegram.ext import (
     filters,
 )
 
+import api_llm
 import deep
 import fallback
 import llm
+import quota
 from prompts import FALLBACK_MESSAGE, GREETING, build_messages
 from retrieval import DataStore
 
@@ -59,7 +61,8 @@ DEEP_ENABLED = os.getenv("DEEP_MODE", "1") == "1"
 # آیا مدل واقعاً در دسترس است؟ (در on_startup بررسی می‌شود)
 MODEL_READY = False
 
-DEEP_BUTTON = "🧠 تحلیل با مدل (۳ تا ۶ دقیقه)"
+DEEP_BUTTON = "🧠 تحلیل مدل"
+API_BUTTON = "⚡ تحلیل با API"
 PENDING_TTL = 30 * 60          # دکمه‌ی هر پاسخ نیم ساعت معتبر است
 PENDING_MAX = 400              # سقف دکمه‌های فعال (جلوگیری از رشد حافظه)
 PENDING: dict[str, dict] = {}  # توکن کوتاه ⇒ {query, user, ts}
@@ -97,6 +100,9 @@ log = logging.getLogger("amoozeshbot")
 STORE = DataStore(".")
 for _line in STORE.log:
     log.info(_line)
+
+# سهمیه‌ی روزانه: ۳ تحلیل محلی و ۱ تحلیل API برای هر کاربر
+QUOTA = quota.create_store()
 
 
 def split_message(text: str, limit: int = MAX_MESSAGE_LEN) -> list[str]:
@@ -161,13 +167,63 @@ def can_offer_deep() -> bool:
     return DEEP_ENABLED and MODEL_READY and not MODEL_SUMMARY
 
 
+def can_offer_api() -> bool:
+    """دکمه‌ی API فقط وقتی کلید تنظیم شده باشد."""
+    return api_llm.enabled()
+
+
+def quota_line(user_id) -> str:
+    """«🧠 ۳ از ۳ · ⚡ ۱ از ۱» برای فوتر پاسخ (فقط حالت‌های در دسترس)."""
+    parts = [
+        f"🧠 {fallback._fa(QUOTA.remaining(user_id, 'deep'))}"
+        f" از {fallback._fa(QUOTA.limit('deep'))}"
+    ]
+    if can_offer_api() or QUOTA.remaining(user_id, "api") < QUOTA.limit("api"):
+        parts.append(
+            f"⚡ {fallback._fa(QUOTA.remaining(user_id, 'api'))}"
+            f" از {fallback._fa(QUOTA.limit('api'))}"
+        )
+    return " · ".join(parts)
+
+
+def quota_exhausted_text(user_id, kind: str) -> str:
+    """پیام روشن وقتی سهمیه‌ی امروز تمام شده است."""
+    label = quota.KIND_LABEL.get(kind, kind)
+    limit = QUOTA.limit(kind)
+    lines = [
+        f"⏳ سهمیه‌ی امروزت برای «{label}» تمام شده است "
+        f"({fallback._fa(limit)} از {fallback._fa(limit)}).",
+        f"این سهمیه {quota.reset_text()} باز می‌شود.",
+    ]
+    other = "api" if kind == "deep" else "deep"
+    left = QUOTA.remaining(user_id, other)
+    if left > 0:
+        lines.append(
+            f"ولی «{quota.KIND_LABEL[other]}» هنوز {fallback._fa(left)} بار مانده؛ "
+            "از همان دکمه استفاده کن."
+        )
+    return "\n".join(lines)
+
+
 def deep_keyboard(query: str, user_id: int | None = None) -> InlineKeyboardMarkup | None:
-    if not can_offer_deep() or not query.strip():
+    """دکمه‌های تحلیل عمیق: مدل محلی (۳ بار در روز) و API (۱ بار در روز)."""
+    if not query.strip():
         return None
-    token = remember_query(query, user_id)
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(DEEP_BUTTON, callback_data=f"deep:{token}")
-    ]])
+    rows: list[list[InlineKeyboardButton]] = []
+
+    if can_offer_deep():
+        token = remember_query(query, user_id)
+        left = QUOTA.remaining(user_id, "deep")
+        label = f"{DEEP_BUTTON} · {fallback._fa(left)} از {fallback._fa(QUOTA.limit('deep'))} امروز"
+        rows.append([InlineKeyboardButton(label, callback_data=f"deep:{token}")])
+
+    if can_offer_api():
+        token = remember_query(query, user_id)
+        left = QUOTA.remaining(user_id, "api")
+        label = f"{API_BUTTON} · {fallback._fa(left)} از {fallback._fa(QUOTA.limit('api'))} امروز"
+        rows.append([InlineKeyboardButton(label, callback_data=f"api:{token}")])
+
+    return InlineKeyboardMarkup(rows) if rows else None
 
 
 def base_summary(store, query: str) -> str:
@@ -196,13 +252,16 @@ def data_verdict(facts: str) -> str:
     return ""
 
 
-def compose_deep_text(store, query: str, result: dict) -> str:
+def compose_deep_text(store, query: str, result: dict,
+                      user_id=None) -> str:
     """متن نهایی پیام حالت مدل: تحلیل مدل یا شفاف‌سازی شکست + پاسخ قطعی."""
     facts = fallback.answer(store, query) or ""
     summary = base_summary(store, query)
+    provider = result.get("provider", "local")
+    icon = "⚡ تحلیل با API" if provider == "api" else "🧠 تحلیل مدل"
 
     if result.get("ok"):
-        lines = [f"🧠 تحلیل مدل ({result.get('model', llm.MODEL_NAME)})", ""]
+        lines = [f"{icon} ({result.get('model', deep.provider_label(provider))})", ""]
         lines.append(result["text"].strip())
         if summary:
             lines.append("")
@@ -211,16 +270,21 @@ def compose_deep_text(store, query: str, result: dict) -> str:
         if verdict:
             # مدل ممکن است اشتباه قضاوت کند؛ حکم محاسبه‌شده از داده همیشه دیده شود
             lines.append(f"🎯 حکم داده (بدون مدل): {verdict}")
+        if user_id is not None:
+            lines.append("")
+            lines.append(f"🎟 سهمیه‌ی امروز: {quota_line(user_id)}")
         return "\n".join(lines)
 
     # شکست: صادقانه بگو چرا، و همان پاسخ معتبر داده را نگه دار
-    reason = result.get("reason") or "دلیل نامشخص"
+    reason = (result.get("reason") or "دلیل نامشخص").strip().rstrip(".").strip()
     if result.get("model_failed"):
         head = f"⚠️ مدل در دسترس نبود ({reason})."
     elif result.get("text"):
         head = f"⚠️ تحلیل مدل با داده هم‌خوان نبود و نمایش داده نشد ({reason})."
     else:
         head = f"⚠️ مدل تحلیل قابل استنادی نداد ({reason})."
+    if user_id is not None:
+        head = f"{head}\n🎟 سهمیه‌ی امروز: {quota_line(user_id)} (این درخواست حساب نشد)"
     if facts:
         return f"{head}\nهمان پاسخ داده معتبر است:\n\n{facts}"
     return head
@@ -231,20 +295,33 @@ def compose_deep_text(store, query: str, result: dict) -> str:
 DEEP_RUN_LOCK = threading.Lock()
 
 
-def _analyze_serialized(store, query: str) -> dict:
+def _analyze_serialized(store, query: str, provider: str) -> dict:
     with DEEP_RUN_LOCK:
-        return deep.analyze(store, query)
+        return deep.analyze(store, query, provider=provider)
 
 
-async def run_deep(store, query: str) -> str:
-    """اجرای تحلیل مدل (در thread جدا و یکی‌یکی، چون چند دقیقه طول می‌کشد)."""
-    result = await asyncio.to_thread(_analyze_serialized, store, query)
+async def run_deep(store, query: str, provider: str = "local", user_id=None) -> str:
+    """اجرای تحلیل مدل (در thread جدا و یکی‌یکی، چون چند دقیقه طول می‌کشد).
+
+    سهمیه پیش از اجرا کم می‌شود و اگر خطا از سمت زیرساخت بود برمی‌گردد؛
+    تحلیلِ ردشده به‌خاطر اعتبارسنجی، سهمیه را مصرف می‌کند (مدل واقعاً اجرا شده).
+    """
+    kind = "api" if provider == "api" else "deep"
+    if user_id is not None and not QUOTA.consume(user_id, kind):
+        return quota_exhausted_text(user_id, kind)
+
+    result = await asyncio.to_thread(_analyze_serialized, store, query, provider)
+    if result.get("model_failed") and user_id is not None:
+        QUOTA.refund(user_id, kind)
+        log.info("سهمیه‌ی %s برای کاربر %s برگشت داده شد (خطای زیرساخت).",
+                 kind, user_id)
+
     log.info(
-        "حالت مدل: %s | ok=%s | دلیل=%s | %.1f ثانیه | زمینه %s کاراکتر",
-        query[:50], result.get("ok"), result.get("reason"),
-        result.get("elapsed", 0), result.get("meta", {}).get("chars"),
+        "حالت %s: %s | ok=%s | دلیل=%s | %.1f ثانیه | زمینه %s کاراکتر | کاربر %s",
+        provider, query[:50], result.get("ok"), result.get("reason"),
+        result.get("elapsed", 0), result.get("meta", {}).get("chars"), user_id,
     )
-    return compose_deep_text(store, query, result)
+    return compose_deep_text(store, query, result, user_id=user_id)
 
 
 async def _edit_or_split(query, text: str) -> None:
@@ -261,55 +338,95 @@ async def _edit_or_split(query, text: str) -> None:
             await query.message.reply_text(chunk)
 
 
-async def deep_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """دکمه‌ی «تحلیل با مدل» زیر پاسخ سریع."""
-    query = update.callback_query
-    if query is None:
-        return
-    await query.answer()
+PROGRESS_TEXT = {
+    "deep": (
+        "🧠 در حال تحلیل متن کامل با مدل «{model}»…\n"
+        "این کار روی CPU بین ۳ تا ۶ دقیقه طول می‌کشد. لازم نیست کاری کنی؛ "
+        "نتیجه همین‌جا جایگزین می‌شود."
+    ),
+    "api": (
+        "⚡ در حال تحلیل با API «{model}»…\n"
+        "معمولاً کمتر از ۳۰ ثانیه طول می‌کشد."
+    ),
+}
 
-    token = (query.data or "").split(":", 1)[-1]
+
+async def _on_deep_button(update: Update, kind: str) -> None:
+    """دکمه‌ی تحلیل (مدل محلی یا API) زیر پاسخ سریع."""
+    callback = update.callback_query
+    if callback is None:
+        return
+    await callback.answer()
+
+    user_id = getattr(getattr(callback, "from_user", None), "id", None)
+    token = (callback.data or "").split(":", 1)[-1]
     entry = recall_query(token)
     if entry is None:
         await _edit_or_split(
-            query, "⌛️ این دکمه منقضی شده است؛ لطفاً پرسش را دوباره بفرست."
+            callback, "⌛️ این دکمه منقضی شده است؛ لطفاً پرسش را دوباره بفرست."
         )
         return
 
+    if user_id is not None and QUOTA.remaining(user_id, kind) <= 0:
+        await _edit_or_split(callback, quota_exhausted_text(user_id, kind))
+        return
+
     await _edit_or_split(
-        query,
-        f"🧠 در حال تحلیل متن کامل با مدل «{llm.MODEL_NAME}»…\n"
-        "این کار روی CPU بین ۳ تا ۶ دقیقه طول می‌کشد. لازم نیست کاری کنی؛ "
-        "نتیجه همین‌جا جایگزین می‌شود.",
+        callback, PROGRESS_TEXT[kind].format(model=deep.provider_label(kind))
     )
-    text = await run_deep(STORE, entry["query"])
-    await _edit_or_split(query, text)
+    text = await run_deep(STORE, entry["query"], provider=kind, user_id=user_id)
+    await _edit_or_split(callback, text)
 
 
-async def deep_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/deep <سوال> — از همان اول مسیر مدل."""
+async def deep_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دکمه‌ی «تحلیل مدل» (Ollama)."""
+    await _on_deep_button(update, "deep")
+
+
+async def api_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دکمه‌ی «تحلیل با API» (سرویس ابری)."""
+    await _on_deep_button(update, "api")
+
+
+async def _deep_command(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                        kind: str) -> None:
     if not update.message:
         return
     if not is_addressed_to_bot(update, context):
         return
+    command = "/deep" if kind == "deep" else "/api"
     question = " ".join(context.args or []).strip()
     if not question:
         await update.message.reply_text(
-            "متن پرسش را بعد از دستور بنویس؛ مثال:\n/deep غلامیان یا تهرانیان؟"
+            f"متن پرسش را بعد از دستور بنویس؛ مثال:\n{command} غلامیان یا تهرانیان؟"
         )
         return
 
-    if not MODEL_READY:
+    user_id = getattr(getattr(update.message, "from_user", None), "id", None)
+
+    if kind == "api" and not can_offer_api():
+        facts = fallback.answer(STORE, question) or ""
+        note = ("⚠️ حالت API تنظیم نشده است (کلید API در Secrets نیست)."
+                "\nپاسخ فوری از داده:\n\n")
+        await send_long(update.message, note + (facts or GREETING))
+        return
+
+    if kind == "deep" and not MODEL_READY:
         facts = fallback.answer(STORE, question) or ""
         note = ("⚠️ حالت مدل روی این اجرا فعال نیست (Ollama/مدل در دسترس نیست)."
                 "\nپاسخ فوری از داده:\n\n")
         await send_long(update.message, note + (facts or GREETING))
         return
 
+    if user_id is not None and QUOTA.remaining(user_id, kind) <= 0:
+        await update.message.reply_text(quota_exhausted_text(user_id, kind))
+        return
+
     placeholder = await update.message.reply_text(
-        f"🧠 در حال تحلیل متن کامل با مدل «{llm.MODEL_NAME}»… (۳ تا ۶ دقیقه)"
+        PROGRESS_TEXT[kind].format(model=deep.provider_label(kind))
+        + ("\n(۳ تا ۶ دقیقه)" if kind == "deep" else "")
     )
-    text = await run_deep(STORE, question)
+    text = await run_deep(STORE, question, provider=kind, user_id=user_id)
     chunks = split_message(text) or [FALLBACK_MESSAGE]
     try:
         await placeholder.edit_text(chunks[0])
@@ -318,6 +435,16 @@ async def deep_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(chunks[0])
     for chunk in chunks[1:]:
         await update.message.reply_text(chunk)
+
+
+async def deep_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/deep <سوال> — تحلیل با مدل محلی."""
+    await _deep_command(update, context, "deep")
+
+
+async def api_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/api <سوال> — تحلیل با سرویس ابری."""
+    await _deep_command(update, context, "api")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -452,12 +579,21 @@ def main() -> None:
     )
     app.add_handler(CommandHandler(["start", "help"], start_command))
     app.add_handler(CommandHandler("deep", deep_command))
+    app.add_handler(CommandHandler("api", api_command))
     app.add_handler(CallbackQueryHandler(deep_callback, pattern=r"^deep:"))
+    app.add_handler(CallbackQueryHandler(api_callback, pattern=r"^api:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     log.info(
-        "🚀 ربات فعال شد | پاسخ سریع: همیشه | حالت مدل «%s»: %s",
+        "🚀 ربات فعال شد | پاسخ سریع: همیشه | مدل محلی «%s»: %s | API «%s»: %s",
         llm.MODEL_NAME, "فعال" if MODEL_READY else "غیرفعال",
+        api_llm.model_label(), "فعال" if can_offer_api() else "غیرفعال (کلید نیست)",
+    )
+    log.info(
+        "🎟 سهمیه‌ی روزانه: مدل محلی %s بار · API %s بار برای هر کاربر | پشتیبان: %s",
+        quota.LIMITS["deep"], quota.LIMITS["api"],
+        "شاخه‌ی " + quota.STATE_BRANCH if QUOTA.remote and QUOTA.persist_remote
+        else "فایل محلی",
     )
     app.run_polling(drop_pending_updates=True)
 

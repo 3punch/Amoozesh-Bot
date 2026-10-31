@@ -698,6 +698,324 @@ def test_workflows():
         check(f"{name}: دانلود فقط در صورت نبودن مدل",
               'grep -qx "$MODEL_NAME"' in text)
 
+
+# ---------------------------------------------------------------- 3.8) سهمیه و API
+
+class FakeOpenAI(BaseHTTPRequestHandler):
+    """سرور جعلی سازگار با OpenAI (همان چیزی که OpenRouter برمی‌گرداند)."""
+
+    mode = "ok"
+    last_body = None
+    last_auth = None
+
+    def log_message(self, *args):  # ساکت
+        pass
+
+    def _send(self, code, payload):
+        body = json.dumps(payload).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length) or b"{}")
+        FakeOpenAI.last_body = body
+        FakeOpenAI.last_auth = self.headers.get("Authorization")
+        if FakeOpenAI.mode == "401":
+            return self._send(401, {"error": {"message": "invalid key"}})
+        if FakeOpenAI.mode == "empty":
+            return self._send(200, {"choices": []})
+        return self._send(200, {
+            "model": body.get("model"),
+            "choices": [{"message": {
+                "role": "assistant",
+                "content": "نتیجه: غلامیان انتخاب کم‌ریسک‌تری است برای این درس.",
+            }}],
+            "usage": {"prompt_tokens": 120, "completion_tokens": 30},
+        })
+
+
+def test_api_provider():
+    print("\n[۳.۸] ارائه‌دهنده‌ی API (سرور جعلی سازگار با OpenAI)")
+    import api_llm
+
+    server = HTTPServer(("127.0.0.1", 0), FakeOpenAI)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    old = (api_llm.API_BASE_URL, api_llm.API_KEY, api_llm.API_MODEL)
+    api_llm.API_BASE_URL = f"http://127.0.0.1:{port}"
+    api_llm.API_KEY = "test-key"
+    api_llm.API_MODEL = "test/model-1"
+    try:
+        check("با کلید، API فعال است", api_llm.enabled())
+
+        text = api_llm.generate([{"role": "user", "content": "سلام"}])
+        check("پاسخ API دریافت شد", "غلامیان" in text, text[:60])
+        check("کلید در هدر Authorization رفت",
+              FakeOpenAI.last_auth == "Bearer test-key", str(FakeOpenAI.last_auth))
+        check("مدل در درخواست ارسال شد",
+              (FakeOpenAI.last_body or {}).get("model") == "test/model-1")
+        check("آمار مصرف ثبت شد",
+              api_llm.LAST_STATS.get("provider") == "api"
+              and api_llm.LAST_STATS.get("eval_count") == 30, str(api_llm.LAST_STATS))
+
+        FakeOpenAI.mode = "401"
+        try:
+            api_llm.generate([{"role": "user", "content": "x"}])
+            check("کلید نامعتبر خطا داد", False)
+        except api_llm.APIError as exc:
+            check("کلید نامعتبر خطا داد", "کلید" in str(exc), str(exc))
+
+        FakeOpenAI.mode = "empty"
+        try:
+            api_llm.generate([{"role": "user", "content": "x"}])
+            check("پاسخ خالی خطا داد", False)
+        except api_llm.APIError as exc:
+            check("پاسخ خالی خطا داد", "خالی" in str(exc), str(exc))
+        FakeOpenAI.mode = "ok"
+
+        api_llm.API_KEY = ""
+        check("بدون کلید، API غیرفعال است", not api_llm.enabled())
+        try:
+            api_llm.generate([{"role": "user", "content": "x"}])
+            check("بدون کلید درخواستی نمی‌رود", False)
+        except api_llm.APIError as exc:
+            check("بدون کلید درخواستی نمی‌رود", "تنظیم نشده" in str(exc), str(exc))
+
+        # --- مسیر تحلیل با API در deep.py (اعتبارسنجی هم اجرا می‌شود)
+        import deep
+        from retrieval import DataStore
+
+        api_llm.API_KEY = "test-key"
+        store = DataStore(".")
+        result = deep.analyze(store, "غلامیان یا تهرانیان؟", provider="api")
+        check("تحلیل با API ساخته شد", result["ok"], result["reason"])
+        check("برچسب مدل از API می‌آید", result["model"] == "test/model-1", result["model"])
+        check("provider در خروجی ثبت شد", result["provider"] == "api")
+
+        FakeOpenAI.mode = "401"
+        failed = deep.analyze(store, "غلامیان یا تهرانیان؟", provider="api")
+        check("خطای API به شکست مدل تبدیل شد",
+              not failed["ok"] and failed["model_failed"], failed["reason"])
+        FakeOpenAI.mode = "ok"
+    finally:
+        api_llm.API_BASE_URL, api_llm.API_KEY, api_llm.API_MODEL = old
+        server.shutdown()
+
+
+def test_quota():
+    print("\n[۳.۹] سهمیه‌ی روزانه‌ی هر کاربر")
+    import tempfile
+    from datetime import datetime, timedelta, timezone
+
+    import quota
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "quotas.json")
+        store = quota.QuotaStore(path=path, persist_remote=False)
+
+        check("سقف پیش‌فرض: مدل ۳ بار", quota.LIMITS["deep"] == 3)
+        check("سقف پیش‌فرض: API ۱ بار", quota.LIMITS["api"] == 1)
+        check("کاربر تازه کل سهمیه را دارد",
+              store.remaining(11, "deep") == 3 and store.remaining(11, "api") == 1)
+
+        check("مصرف مدل ۱", store.consume(11, "deep"))
+        check("مصرف مدل ۲", store.consume(11, "deep"))
+        check("مصرف مدل ۳", store.consume(11, "deep"))
+        check("مصرف چهارم رد شد", not store.consume(11, "deep"))
+        check("سهمیه‌ی مدل صفر شد", store.remaining(11, "deep") == 0)
+
+        check("مصرف API ۱", store.consume(11, "api"))
+        check("مصرف API دوم رد شد", not store.consume(11, "api"))
+
+        check("کاربر دیگر سهمیه‌ی خودش را دارد", store.remaining(22, "deep") == 3)
+
+        store.refund(11, "deep")
+        check("برگشت سهمیه بعد از خطا", store.remaining(11, "deep") == 1)
+
+        reloaded = quota.QuotaStore(path=path, persist_remote=False)
+        check("سهمیه روی دیسک ماند", reloaded.remaining(11, "deep") == 1
+              and reloaded.remaining(11, "api") == 0)
+
+        # گذشت روز ⇒ سهمیه‌ی تازه
+        original_today = quota.today_key
+        tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
+        quota.today_key = lambda now=None: original_today(tomorrow)
+        try:
+            check("روز بعد سهمیه ریست می‌شود", store.remaining(11, "deep") == 3)
+        finally:
+            quota.today_key = original_today
+
+        store.reset(11)
+        check("ریست دستی کار می‌کند", store.remaining(11, "api") == 1)
+
+    # --- ادغام با پشتیبان گیت‌هاب (max برنده است)
+    class FakeRemote:
+        def __init__(self, data):
+            self.data = data
+            self.saved = None
+
+        def load(self):
+            return self.data
+
+        def save(self, data):
+            self.saved = data
+            return True
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "quotas.json")
+        today = quota.today_key()
+        remote = FakeRemote({today: {"33": {"deep": 2}}})
+        store = quota.QuotaStore(path=path, remote=remote, persist_remote=True)
+        store.sync()
+        check("سهمیه‌ی گیت‌هاب خوانده شد", store.remaining(33, "deep") == 1,
+              str(store.remaining(33, "deep")))
+        store.consume(33, "deep")
+        check("شمارنده‌ی محلی جلوتر از ریموت نگه داشته می‌شود",
+              store.remaining(33, "deep") == 0)
+
+
+# ---------------------------------------------------------------- 3.95) سهمیه در ربات
+
+def test_rate_limits_in_bot():
+    print("\n[۳.۹۵] دکمه‌ها و سهمیه در ربات")
+    import asyncio
+    import tempfile
+    import types
+
+    import EntekhabVahedBot as bot
+    import api_llm
+    import llm
+    import quota
+
+    with tempfile.TemporaryDirectory() as tmp:
+        old_quota = bot.QUOTA
+        old_api_key = api_llm.API_KEY
+        old_model_ready = bot.MODEL_READY
+        bot.QUOTA = quota.QuotaStore(
+            path=os.path.join(tmp, "quotas.json"), persist_remote=False
+        )
+        api_llm.API_KEY = "test-key"
+        bot.MODEL_READY = True
+        try:
+            markup = bot.deep_keyboard("غلامیان یا تهرانیان؟", 77)
+            check("دو دکمه ساخته شد (مدل + API)", markup and len(markup.inline_keyboard) == 2,
+                  str(markup))
+            deep_label = markup.inline_keyboard[0][0].text
+            api_label = markup.inline_keyboard[1][0].text
+            check("دکمه‌ی مدل سهمیه را نشان می‌دهد", "۳ از ۳" in deep_label, deep_label)
+            check("دکمه‌ی API سهمیه‌ی خودش را نشان می‌دهد", "۱ از ۱" in api_label, api_label)
+            check("callback دکمه‌ها کوتاه و تفکیک‌شده‌اند",
+                  markup.inline_keyboard[0][0].callback_data.startswith("deep:")
+                  and markup.inline_keyboard[1][0].callback_data.startswith("api:")
+                  and all(len(row[0].callback_data) < 64 for row in markup.inline_keyboard))
+
+            # مصرف کامل مدل ⇒ برچسب صفر
+            for _ in range(3):
+                bot.QUOTA.consume(77, "deep")
+            after = bot.deep_keyboard("غلامیان یا تهرانیان؟", 77)
+            check("دکمه‌ی مدل بعد از اتمام ۰ از ۳ نشان می‌دهد",
+                  "۰ از ۳" in after.inline_keyboard[0][0].text,
+                  after.inline_keyboard[0][0].text)
+
+            # کلیک روی دکمه‌ی بی‌سهمیه ⇒ پیام روشن
+            token = bot.remember_query("غلامیان یا تهرانیان؟", 77)
+            cq = FakeCallbackQuery(f"deep:{token}")
+            cq.from_user = types.SimpleNamespace(id=77)
+            asyncio.run(bot.deep_callback(types.SimpleNamespace(callback_query=cq),
+                                          types.SimpleNamespace()))
+            check("سهمیه‌ی تمام‌شده با پیام روشن گفته می‌شود",
+                  "سهمیه‌ی امروزت" in cq.edits[-1], cq.edits[-1][:80])
+            check("به گزینه‌ی دیگر ارجاع می‌دهد", "API" in cq.edits[-1])
+
+            # سهمیه‌ی API مصرف‌شده ⇒ پیام آن هم پیام درست بدهد
+            bot.QUOTA.consume(77, "api")
+            token_api = bot.remember_query("غلامیان یا تهرانیان؟", 77)
+            cq_api = FakeCallbackQuery(f"api:{token_api}")
+            cq_api.from_user = types.SimpleNamespace(id=77)
+            asyncio.run(bot.api_callback(types.SimpleNamespace(callback_query=cq_api),
+                                         types.SimpleNamespace()))
+            check("سهمیه‌ی API هم گارد دارد", "سهمیه‌ی امروزت" in cq_api.edits[-1])
+
+            # خطای زیرساخت ⇒ سهمیه برمی‌گردد
+            bot.QUOTA.reset(88)
+            original_generate = llm.generate
+
+            def boom(*a, **kw):
+                raise llm.LLMError("Ollama قطع است")
+
+            llm.generate = boom
+            try:
+                asyncio.run(bot.run_deep(bot.STORE, "غلامیان یا تهرانیان؟",
+                                         provider="deep" if False else "local",
+                                         user_id=88))
+            finally:
+                llm.generate = original_generate
+            check("خطای مدل سهمیه را مصرف نمی‌کند",
+                  bot.QUOTA.remaining(88, "deep") == 3,
+                  str(bot.QUOTA.remaining(88, "deep")))
+
+            # اجرای موفق سهمیه را کم می‌کند
+            llm.generate = lambda *a, **kw: (
+                "نتیجه: غلامیان انتخاب کم‌ریسک‌تری است.\n"
+                "• چند نفر می‌گویند درست‌تر نمره می‌دهد.\n"
+                "• تهرانیان نقد بیشتری گرفته است."
+            )
+            try:
+                text = asyncio.run(bot.run_deep(bot.STORE, "غلامیان یا تهرانیان؟",
+                                                provider="local", user_id=88))
+            finally:
+                llm.generate = original_generate
+            check("اجرای موفق یک واحد از سهمیه کم کرد",
+                  bot.QUOTA.remaining(88, "deep") == 2,
+                  str(bot.QUOTA.remaining(88, "deep")))
+            check("سهمیه‌ی باقی‌مانده در پاسخ دیده می‌شود", "سهمیه‌ی امروز" in text,
+                  text[-120:])
+        finally:
+            bot.QUOTA = old_quota
+            api_llm.API_KEY = old_api_key
+            bot.MODEL_READY = old_model_ready
+
+
+
+# ---------------------------------------------------------------- 3.96) مجموعه‌ی طلایی
+
+def test_golden_eval():
+    print("\n[۳.۹۶] سنجش کیفیت با مجموعه‌ی طلایی")
+    import importlib.util
+    import json
+
+    with open("eval/golden.json", encoding="utf-8") as handle:
+        cases = json.load(handle)["items"]
+    check("مجموعه‌ی طلایی خوانده شد", len(cases) >= 8, str(len(cases)))
+    check("هر مورد شناسه و پرسش دارد",
+          all(c.get("id") and c.get("query") for c in cases))
+    check("هم پرسش مقایسه‌ای دارد هم استادشناسی",
+          any(c["kind"] == "compare" for c in cases)
+          and any(c["kind"] == "prof" for c in cases))
+
+    spec = importlib.util.spec_from_file_location("eval_deep", "scripts/eval_deep.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    ok_result = {"ok": True, "reason": "ok", "elapsed": 1.0,
+                 "text": "نتیجه: غلامیان بهتر است.\n• دلیل"}
+    bad_result = {"ok": True, "reason": "ok", "elapsed": 1.0,
+                  "text": "غلامیان خوب است"}
+
+    case = {"id": "x", "query": "غلامیان یا تهرانیان؟", "entities": ["غلامیان"]}
+    check("پاسخ درست قبول می‌شود", mod.score_case(case, ok_result)["passed"])
+    check("پاسخ بدون «نتیجه:» رد می‌شود", not mod.score_case(case, bad_result)["passed"])
+    check("نبود موجودیت رد می‌شود",
+          not mod.score_case({"id": "y", "entities": ["تهرانیان"]}, ok_result)["passed"])
+    check("متن ممنوع رد می‌کند",
+          not mod.score_case({"id": "z", "entities": ["غلامیان"],
+                              "forbid": ["بهتر است"]}, ok_result)["passed"])
+
 if __name__ == "__main__":
     test_retrieval()
     test_llm_client()
@@ -706,6 +1024,10 @@ if __name__ == "__main__":
     test_deep_mode()
     test_end_to_end()
     test_deep_end_to_end()
+    test_api_provider()
+    test_quota()
+    test_rate_limits_in_bot()
+    test_golden_eval()
     test_workflows()
     print("\n" + ("✅ همه تست‌ها پاس شد." if not FAILS else f"❌ {len(FAILS)} تست ناموفق: {FAILS}"))
     sys.exit(1 if FAILS else 0)

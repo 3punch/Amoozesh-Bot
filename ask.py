@@ -5,6 +5,7 @@
     python ask.py --context "استاد ایزدیخواه چطوره؟"   # فقط زمینه‌ای که به مدل می‌رود
     python ask.py --json  "بهینه سازی خطی برای ورودی ۱۴۰۳ مجازه؟"
     python ask.py --deep  "غلامیان یا تهرانیان؟"       # همان مسیر دکمه‌ی «تحلیل با مدل»
+    python ask.py --api   "غلامیان یا تهرانیان؟"       # تحلیل با سرویس ابری (نیازمند API_KEY)
 
 اگر Ollama در دسترس نباشد، فقط زمینه و بررسی قطعی چاپ می‌شود.
 """
@@ -13,6 +14,7 @@ import argparse
 import json
 import sys
 
+import api_llm
 import deep
 import fallback
 import llm
@@ -27,17 +29,20 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="خروجی JSON")
     parser.add_argument("--deep", action="store_true",
                         help="حالت «تحلیل با مدل» (متن کامل نظرها)")
+    parser.add_argument("--api", action="store_true",
+                        help="تحلیل با سرویس ابری (نیازمند API_KEY)")
     args = parser.parse_args()
 
     question = " ".join(args.question).strip()
     store = DataStore(".")
 
-    if args.deep:
+    if args.deep or args.api:
+        provider = "api" if args.api else "local"
         context, meta = deep.build_deep_context(store, question)
         messages = build_analysis_messages(question, context)
         result = {
             "question": question,
-            "mode": "deep",
+            "mode": provider,
             "facts": fallback.answer(store, question),
             "stats": meta,
             "prompt_tokens_estimate": estimate_tokens(messages[0]["content"]),
@@ -49,10 +54,12 @@ def main() -> int:
         }
         if args.context:
             pass
-        elif not llm.wait_for_server(timeout=20):
+        elif provider == "api" and not api_llm.enabled():
+            result["error"] = "کلید API تنظیم نشده است (API_KEY)."
+        elif provider == "local" and not llm.wait_for_server(timeout=20):
             result["error"] = f"سرویس Ollama روی {llm.OLLAMA_HOST} بالا نیست."
         else:
-            run = deep.analyze(store, question)
+            run = deep.analyze(store, question, provider=provider)
             result["verified"] = run["ok"]
             result["verify_reason"] = run["reason"]
             result["answer"] = run["text"] or None
@@ -66,7 +73,7 @@ def main() -> int:
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0 if result["answer"] or args.context else 1
 
-        print(f"❓ سوال (حالت مدل): {question}")
+        print(f"❓ سوال (حالت {provider}): {question}")
         print(f"👨‍🏫 استاد(های) پرسیده‌شده: {meta.get('professors') or '—'}")
         print(f"📄 زمینه‌ی کامل: {meta.get('chars')} کاراکتر | "
               f"درس‌ها: {meta.get('courses')}")
@@ -78,7 +85,8 @@ def main() -> int:
             print("\n" + "=" * 60 + "\n📄 زمینه:\n" + "=" * 60)
             print(context)
         elif result["answer"]:
-            print("\n" + "=" * 60 + f"\n🧠 تحلیل {llm.MODEL_NAME}:\n" + "=" * 60)
+            label = api_llm.model_label() if provider == "api" else llm.MODEL_NAME
+            print("\n" + "=" * 60 + f"\n🧠 تحلیل {label}:\n" + "=" * 60)
             print(result["answer"])
         elif result.get("rejected_model_text"):
             print("\n" + "=" * 60 + "\n🚫 تحلیل رد شد:\n" + "=" * 60)

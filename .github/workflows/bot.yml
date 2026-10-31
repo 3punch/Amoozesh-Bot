@@ -4,9 +4,12 @@ name: Run Telegram Bot 24/7
 #   نصب Ollama → مدل Qwen → اجرای ربات → چرخش خودکار قبل از سقف ۶ ساعته
 # هیچ چیزی لازم نیست روی سیستم خودت اجرا شود.
 #
-# دو حالت پاسخ:
+# سه حالت پاسخ:
 #   • سریع (همیشه): پاسخ از داده، زیر یک ثانیه.
-#   • مدل (انتخابی): دکمه‌ی زیر پاسخ یا /deep؛ مدل متن کامل را می‌خواند (۲ تا ۴ دقیقه).
+#   • مدل محلی (انتخابی): دکمه‌ی زیر پاسخ یا /deep؛ ۳ بار در روز برای هر کاربر.
+#   • API ابری (انتخابی): دکمه‌ی ⚡ یا /api؛ ۱ بار در روز برای هر کاربر.
+#
+# سهمیه‌ی هر کاربر روی شاخه‌ی `bot-state` نگه‌داری می‌شود (نه main، تا ربات ری‌استارت نشود).
 #
 # cron هر ۵ ساعت یک run در صف می‌گذارد؛ با concurrency (بدون cancel) همیشه
 # دقیقاً یک نمونه در حال اجراست و نمونه‌ی بعدی بلافاصله جایش را می‌گیرد.
@@ -24,7 +27,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write      # برای ذخیره‌ی سهمیه‌ی روزانه روی شاخه‌ی bot-state
 
 jobs:
   run-bot:
@@ -38,6 +41,13 @@ jobs:
       # "1" = دکمه‌ی «🧠 تحلیل با مدل» زیر پاسخ + دستور /deep فعال باشد.
       # مدل فقط وقتی صدا زده می‌شود که کاربر خودش بخواهد؛ پاسخ سریع همان اول می‌آید.
       DEEP_MODE: "1"
+      # --- API ابری (اختیاری): بدون کلید، دکمه‌ی ⚡ و /api نمایش داده نمی‌شوند.
+      API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      API_MODEL: qwen/qwen2.5-72b-instruct
+      API_BASE_URL: https://openrouter.ai/api/v1
+      # --- سهمیه‌ی روزانه‌ی هر کاربر (روی شاخه‌ی bot-state)
+      QUOTA_PERSIST: "1"
+      QUOTA_STATE_BRANCH: bot-state
       THINK: "0"
       OLLAMA_HOST: http://127.0.0.1:11434
       OLLAMA_KEEP_ALIVE: 6h
@@ -159,6 +169,9 @@ jobs:
       - name: Run Telegram Bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          # برای خواندن/نوشتن سهمیه در شاخه‌ی bot-state
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           CHECK_UPDATES: "1"
         run: bash scripts/run_bot.sh
 
