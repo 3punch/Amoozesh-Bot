@@ -63,47 +63,86 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # وزن‌های مدل کش می‌شوند تا هر بار ۳.۳ گیگ دانلود نشود
-      - name: Cache Ollama models
+      # وزن‌های مدل در کش Actions می‌مانند؛ فقط وقتی کش خالی/منقضی شده باشد
+      # دانلود انجام می‌شود. (کش ۷ روز بدون استفاده یا با پر شدن ۱۰ گیگ پاک می‌شود،
+      # ولی این ربات هر ~۵ ساعت اجرا می‌شود و کش داغ می‌ماند.)
+      - name: Resolve model cache key
         if: env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'
+        id: model_key
+        run: |
+          # «:» در نام مدل را برای کلید کش ساده می‌کنیم: qwen2.5:7b → qwen2-5-7b
+          key=$(echo "$MODEL_NAME" | tr ':.@/' '----')
+          echo "key=ollama-$key" >> "$GITHUB_OUTPUT"
+          echo "کلید کش مدل: ollama-$key"
+
+      - name: Restore model from cache
+        if: env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'
+        id: model_cache
         uses: actions/cache@v4
         with:
           path: ~/.ollama/models
-          key: ollama-models-${{ env.MODEL_NAME }}-v2
+          key: ${{ steps.model_key.outputs.key }}-v3
           restore-keys: |
-            ollama-models-
+            ${{ steps.model_key.outputs.key }}-
+            ollama-
 
       - name: Install Ollama
         if: env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'
+        continue-on-error: true
         run: |
           curl -fsSL https://ollama.com/install.sh | sh
           ollama --version
 
-      - name: Start Ollama server
+      - name: Start Ollama and make sure the model is present
         if: env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'
+        continue-on-error: true
+        env:
+          CACHE_HIT: ${{ steps.model_cache.outputs.cache-hit }}
         run: |
+          set -u
+          command -v ollama >/dev/null || { echo "::warning::Ollama نصب نشد."; exit 0; }
+
           mkdir -p ~/.ollama
           nohup ollama serve > /tmp/ollama.log 2>&1 &
           for i in $(seq 1 60); do
-            if curl -fsS "$OLLAMA_HOST/api/tags" > /dev/null; then
-              echo "Ollama is up"; exit 0
-            fi
+            curl -fsS "$OLLAMA_HOST/api/tags" > /dev/null && break
             sleep 2
           done
-          echo "Ollama did not start"; tail -50 /tmp/ollama.log; exit 1
+          if ! curl -fsS "$OLLAMA_HOST/api/tags" > /dev/null; then
+            echo "::warning::سرویس Ollama بالا نیامد؛ ربات در حالت سریع اجرا می‌شود."
+            tail -20 /tmp/ollama.log || true
+            exit 0
+          fi
+          echo "Ollama is up"
 
-      - name: Pull model
-        if: env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'
-        run: |
-          ollama pull "$MODEL_NAME"
+          if ollama list | awk '{print $1}' | grep -qx "$MODEL_NAME"; then
+            echo "✅ مدل «$MODEL_NAME» از کش موجود است؛ دانلودی لازم نیست (cache-hit=$CACHE_HIT)."
+          else
+            echo "⬇️ مدل در کش نبود (cache-hit=$CACHE_HIT)؛ دانلود یک‌باره شروع می‌شود…"
+            started=$(date +%s)
+            ollama pull "$MODEL_NAME" || {
+              echo "::warning::دانلود مدل ناموفق بود؛ ربات در حالت سریع اجرا می‌شود."
+              exit 0
+            }
+            echo "دانلود در $(( $(date +%s) - started )) ثانیه تمام شد."
+          fi
           ollama list
 
-      - name: Warm up model
-        if: env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'
-        run: |
+          # بارگذاری در حافظه تا اولین تحلیل کاربر منتظر بارگذاری نماند
           curl -fsS "$OLLAMA_HOST/api/generate" \
             -d "{\"model\":\"$MODEL_NAME\",\"prompt\":\"سلام\",\"stream\":false,\"options\":{\"num_predict\":8}}" \
-            > /dev/null && echo "مدل در حافظه بارگذاری شد."
+            > /dev/null && echo "مدل در حافظه بارگذاری شد." || true
+
+      - name: Report model availability
+        if: always() && (env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1')
+        env:
+          CACHE_HIT: ${{ steps.model_cache.outputs.cache-hit }}
+        run: |
+          if curl -fsS "$OLLAMA_HOST/api/tags" 2>/dev/null | grep -q "$MODEL_NAME"; then
+            echo "✅ حالت مدل آماده است (cache-hit=$CACHE_HIT)."
+          else
+            echo "::warning::مدل در دسترس نیست ⇒ ربات فقط در حالت سریع کار می‌کند."
+          fi
 
       - name: Run tests
         run: python tests/test_offline.py
