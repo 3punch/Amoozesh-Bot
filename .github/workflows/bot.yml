@@ -28,6 +28,7 @@ concurrency:
 
 permissions:
   contents: write      # برای ذخیره‌ی سهمیه‌ی روزانه روی شاخه‌ی bot-state
+  issues: write        # برای خبر دادن شکست تست‌ها (وقتی ربات بالا نمی‌آید)
 
 jobs:
   run-bot:
@@ -154,8 +155,50 @@ jobs:
             echo "::warning::مدل در دسترس نیست ⇒ ربات فقط در حالت سریع کار می‌کند."
           fi
 
+      # اگر تست‌ها شکست بخورند ربات اصلاً بالا نمی‌آید؛ پس شکست باید جایی دیده
+      # شود، نه فقط داخل لاگ. یک Issue باز می‌شود و با سبز شدن دوباره بسته می‌شود.
       - name: Run tests
-        run: python tests/test_offline.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          python tests/test_offline.py 2>&1 | tee /tmp/tests.txt
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            {
+              echo "ربات در این اجرا بالا نیامد چون تست‌های آفلاین شکست خوردند."
+              echo
+              echo "- کامیت: \`${GITHUB_SHA:0:7}\`"
+              echo "- اجرا: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+              echo
+              echo '```'
+              tail -60 /tmp/tests.txt
+              echo '```'
+            } > /tmp/body.md
+            num=$(gh issue list --state open --limit 50 --json number,title \
+                    --jq '.[] | select(.title | startswith("❌ تست آفلاین")) | .number' \
+                  | head -1)
+            if [ -n "$num" ]; then
+              gh issue comment "$num" --body-file /tmp/body.md || true
+            else
+              gh issue create --title "❌ تست آفلاین شکست خورد — ربات متوقف است" \
+                --body-file /tmp/body.md || true
+            fi
+          fi
+          exit "$code"
+
+      - name: Close stale failure issue
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          num=$(gh issue list --state open --limit 50 --json number,title \
+                  --jq '.[] | select(.title | startswith("❌ تست آفلاین")) | .number' \
+                | head -1)
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body "✅ تست‌ها دوباره سبز شدند؛ ربات در حال اجراست (کامیت \`${GITHUB_SHA:0:7}\`)."
+            gh issue close "$num"
+          fi
 
       - name: Check token secret
         env:
