@@ -62,8 +62,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ollama/models
-          key: ollama-models-${{ env.MODEL_NAME }}-v2
-          restore-keys: ollama-models-
+          key: ollama-${{ env.MODEL_NAME }}-v3
+          restore-keys: |
+            ollama-
 
       - name: Install and start Ollama
         run: |
@@ -76,7 +77,12 @@ jobs:
             curl -fsS "$OLLAMA_HOST/api/tags" > /dev/null && break
             sleep 2
           done
-          ollama pull "$MODEL_NAME"
+          if ollama list | awk '{print $1}' | grep -qx "$MODEL_NAME"; then
+            echo "✅ مدل از کش موجود است؛ دانلودی لازم نیست."
+          else
+            echo "⬇️ مدل در کش نبود؛ دانلود…"
+            ollama pull "$MODEL_NAME"
+          fi
           ollama list
 
       - name: Ask the model

@@ -674,6 +674,30 @@ def test_deep_end_to_end():
         bot.MODEL_READY = False
 
 
+
+# ---------------------------------------------------------------- 5) گردش‌کارها
+
+def test_workflows():
+    print("\n[۵] گردش‌کارهای Actions (بدون دانلود تکراری مدل)")
+    import pathlib
+
+    yml = pathlib.Path(".github/workflows/bot.yml").read_text(encoding="utf-8")
+    check("کش مدل با کلید ثابت تعریف شده", "steps.model_key.outputs.key" in yml)
+    check("کش قدیمی هم بازیابی می‌شود (بدون دانلود دوباره)",
+          "restore-keys" in yml and "ollama-" in yml)
+    check("پیش از دانلود، وجود مدل بررسی می‌شود",
+          'grep -qx "$MODEL_NAME"' in yml)
+    check("شکست مدل، job را نمی‌کشد (ربات در حالت سریع بالا می‌آید)",
+          yml.count("continue-on-error: true") >= 2)
+    check("کش مدل از کلیدهای ساده‌ی تازه استفاده می‌کند", "-v3" in yml)
+    check("نصب مدل فقط وقتی حالت مدل روشن است",
+          "env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'" in yml)
+
+    for name in ("model-check.yml", "deep-check.yml"):
+        text = pathlib.Path(f".github/workflows/{name}").read_text(encoding="utf-8")
+        check(f"{name}: دانلود فقط در صورت نبودن مدل",
+              'grep -qx "$MODEL_NAME"' in text)
+
 if __name__ == "__main__":
     test_retrieval()
     test_llm_client()
@@ -682,5 +706,6 @@ if __name__ == "__main__":
     test_deep_mode()
     test_end_to_end()
     test_deep_end_to_end()
+    test_workflows()
     print("\n" + ("✅ همه تست‌ها پاس شد." if not FAILS else f"❌ {len(FAILS)} تست ناموفق: {FAILS}"))
     sys.exit(1 if FAILS else 0)
