@@ -26,6 +26,7 @@ import os
 import re
 import time
 
+import api_llm
 import fallback
 import llm
 from prompts import build_analysis_messages
@@ -36,6 +37,9 @@ DEEP_MAX_TOKENS = int(os.getenv("DEEP_MAX_TOKENS", "500"))
 DEEP_NUM_CTX = int(os.getenv("DEEP_NUM_CTX", "8192"))
 DEEP_TIMEOUT = int(os.getenv("DEEP_TIMEOUT", "900"))
 MAX_PROFESSORS = 3
+# چند جمله‌ی «شواهد کلیدی» برای هر استاد (خلاصه‌ی ماشینی، پیش از متن خام)
+MAX_EVIDENCE = 8
+EVIDENCE_CHARS = 260
 
 # ---------------------------------------------------------------- ساخت زمینه
 
@@ -80,6 +84,44 @@ def _professor_block(store, name: str) -> tuple[str, str]:
     return "\n".join(digest), body
 
 
+def _evidence(store, name: str) -> list[str]:
+    """مهم‌ترین جمله‌های یک استاد، پیش از ریختن متن خام جلوی مدل.
+
+    مدل‌های کوچک در متن بلند گم می‌شوند؛ اگر شواهد پررنگ را جدا و اول بدهیم،
+    کیفیت قضاوتشان بالا می‌رود و توکن کمتری هم مصرف می‌شود.
+    """
+    professor = next((p for p in store.professors if p.name == name), None)
+    if professor is None:
+        return []
+    keys = fallback._name_keys(store)
+    scored: list[tuple[int, int, str]] = []
+    for comment in professor.comments:
+        if fallback._is_question(comment):
+            continue
+        # فقط بخشی از پیام که درباره‌ی همین استاد است حساب می‌شود
+        owned = fallback._attributed(comment, keys, name).get(name, 0)
+        if not owned:
+            continue
+        clean = " ".join(comment.split())[:EVIDENCE_CHARS].rstrip()
+        if len(clean) < 12:
+            continue
+        scored.append((abs(owned), owned, clean))
+    scored.sort(key=lambda item: item[0], reverse=True)
+
+    seen: set[str] = set()
+    picked: list[str] = []
+    for _, score, text in scored:
+        key = text[:40]
+        if key in seen:
+            continue
+        seen.add(key)
+        sign = "مثبت" if score > 0 else "منفی"
+        picked.append(f"- [{sign}] {text}")
+        if len(picked) >= MAX_EVIDENCE:
+            break
+    return picked
+
+
 def build_deep_context(store, query: str) -> tuple[str, dict]:
     """زمینه‌ی کامل برای حالت مدل: متن همه‌ی نظرها + خلاصه‌ی عددی + جدول دروس."""
     named = _names_in_query(store, query)
@@ -95,6 +137,18 @@ def build_deep_context(store, query: str) -> tuple[str, dict]:
             if body:
                 bodies.append(f"### {name}\n{body}")
         sections.append(("خلاصه‌ی عددی (این اعداد قابل استناد هستند)", "\n".join(digests)))
+
+        evidence_lines: list[str] = []
+        for name in named:
+            items = _evidence(store, name)
+            if items:
+                evidence_lines.append(f"### {name}\n" + "\n".join(items))
+        if evidence_lines:
+            sections.append((
+                "شواهد کلیدی (خلاصه‌ی ماشینی؛ برای قضاوت سریع از این شروع کن)",
+                "\n\n".join(evidence_lines),
+            ))
+
         sections.append(("متن کامل نظرات دانشجویان (بدون ویرایش)", "\n\n".join(bodies)))
         meta["professors"] = named
 
@@ -201,30 +255,52 @@ def verify_analysis_text(text: str, context: str) -> tuple[bool, str]:
 # ---------------------------------------------------------------- اجرا
 
 
-def analyze(store, query: str) -> dict:
-    """تحلیل کامل با مدل. خروجی همیشه یک dict است؛ خطا استثنا نمی‌دهد."""
+def provider_label(provider: str) -> str:
+    return api_llm.model_label() if provider == "api" else llm.MODEL_NAME
+
+
+def _generate(provider: str, messages: list[dict]) -> str:
+    """درخواست را به مدل محلی یا سرویس ابری می‌فرستد (یکسان‌سازی‌شده)."""
+    if provider == "api":
+        return api_llm.generate(
+            messages,
+            max_tokens=api_llm.API_MAX_TOKENS,
+            temperature=0.2,
+            timeout=api_llm.API_TIMEOUT,
+        )
+    return llm.generate(
+        messages,
+        max_tokens=DEEP_MAX_TOKENS,
+        num_ctx=DEEP_NUM_CTX,
+        timeout=DEEP_TIMEOUT,
+        temperature=0.3,
+    )
+
+
+def analyze(store, query: str, provider: str = "local") -> dict:
+    """تحلیل کامل با مدل. خروجی همیشه یک dict است؛ خطا استثنا نمی‌دهد.
+
+    provider: "local" = Ollama روی همان ماشین، "api" = سرویس سازگار با OpenAI.
+    """
     context, meta = build_deep_context(store, query)
+    meta["provider"] = provider
     started = time.time()
 
     if not context.strip():
         return {"ok": False, "text": "", "reason": "برای این پرسش داده‌ای پیدا نشد",
-                "model_failed": False, "elapsed": 0.0, "meta": meta, "raw": ""}
+                "model_failed": False, "elapsed": 0.0, "meta": meta, "raw": "",
+                "provider": provider}
 
     try:
-        raw = llm.generate(
-            build_analysis_messages(query, context),
-            max_tokens=DEEP_MAX_TOKENS,
-            num_ctx=DEEP_NUM_CTX,
-            timeout=DEEP_TIMEOUT,
-            temperature=0.3,
-        )
-    except llm.LLMError as exc:
+        raw = _generate(provider, build_analysis_messages(query, context))
+    except (llm.LLMError, api_llm.APIError) as exc:
         return {"ok": False, "text": "", "reason": str(exc), "model_failed": True,
-                "elapsed": round(time.time() - started, 1), "meta": meta, "raw": ""}
+                "elapsed": round(time.time() - started, 1), "meta": meta, "raw": "",
+                "provider": provider}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "text": "", "reason": f"خطای پیش‌بینی‌نشده: {exc}",
                 "model_failed": True, "elapsed": round(time.time() - started, 1),
-                "meta": meta, "raw": ""}
+                "meta": meta, "raw": "", "provider": provider}
 
     text = fallback.sanitize_model_text(raw, allow_verdict=True, limit=2500)
     ok, why = verify_analysis_text(text, context)
@@ -236,7 +312,8 @@ def analyze(store, query: str) -> dict:
         "elapsed": round(time.time() - started, 1),
         "meta": meta,
         "raw": raw,
-        "model": llm.MODEL_NAME,
-        "stats": dict(llm.LAST_STATS),
+        "model": provider_label(provider),
+        "provider": provider,
+        "stats": dict(api_llm.LAST_STATS if provider == "api" else llm.LAST_STATS),
     }
     return result
