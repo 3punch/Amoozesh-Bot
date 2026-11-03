@@ -51,6 +51,10 @@ def _names_in_query(store, query: str) -> list[str]:
     for professor in store.professors:
         surname = normalize(professor.name).split()[-1]
         position = nquery.find(surname)
+        if position < 0 and len(surname) >= 4:
+            # همان تحمل غلط محاوره‌ای retrieval: «رحیمه» برای «رحیم».
+            alias = surname + "ه"
+            position = nquery.find(alias)
         if position >= 0 and len(surname) >= 3:
             found.append((position, professor.name))
     found.sort()

@@ -44,7 +44,7 @@ jobs:
       DEEP_MODE: "1"
       # --- API ابری (اختیاری): بدون کلید، دکمه‌ی ⚡ و /api نمایش داده نمی‌شوند.
       API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      API_MODEL: qwen/qwen2.5-72b-instruct
+      API_MODEL: qwen/qwen-2.5-72b-instruct
       API_BASE_URL: https://openrouter.ai/api/v1
       # --- سهمیه‌ی روزانه‌ی هر کاربر (روی شاخه‌ی bot-state)
       QUOTA_PERSIST: "1"

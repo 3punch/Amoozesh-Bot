@@ -10,7 +10,7 @@
 
 متغیرهای محیطی:
     API_KEY        کلید سرویس (اگر خالی باشد، API غیرفعال است)
-    API_MODEL      نام مدل                        (پیش‌فرض: qwen/qwen2.5-72b-instruct)
+    API_MODEL      نام مدل                        (پیش‌فرض: qwen/qwen-2.5-72b-instruct)
     API_BASE_URL   آدرس سازگار با OpenAI          (پیش‌فرض: https://openrouter.ai/api/v1)
     API_TIMEOUT    مهلت هر درخواست (ثانیه)        (پیش‌فرض: 120)
     API_MAX_TOKENS حداکثر توکن پاسخ               (پیش‌فرض: 700)
@@ -32,7 +32,7 @@ API_KEY = (
     or os.getenv("OPENAI_API_KEY")
     or ""
 ).strip()
-API_MODEL = os.getenv("API_MODEL", "qwen/qwen2.5-72b-instruct").strip()
+API_MODEL = os.getenv("API_MODEL", "qwen/qwen-2.5-72b-instruct").strip()
 API_BASE_URL = os.getenv("API_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
 API_TIMEOUT = int(os.getenv("API_TIMEOUT", "120"))
 API_MAX_TOKENS = int(os.getenv("API_MAX_TOKENS", "700"))

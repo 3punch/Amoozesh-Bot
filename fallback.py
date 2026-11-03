@@ -167,12 +167,15 @@ QUESTION_WORDS = ("چجور", "چطور", "چیه", "کسی", "می‌دونه",
 
 
 def _is_question(text: str) -> bool:
-    """پرسش واقعی؛ پیام بلند با یک علامت سوال نمایشی، نظر حساب می‌شود."""
+    """پرسش واقعی را از تجربه‌ی دانشجو جدا می‌کند، حتی اگر متن بلند باشد."""
     norm = normalize(text)
     if any(word in norm for word in QUESTION_WORDS):
         return True
+    # پرسش‌های محاوره‌ای که ممکن است با واژه‌ی مثبت (مثل «ارزش داره») اشتباه شوند.
+    if re.search(r"\b(?:ارزش داره|کسی میدونه|کسی می دونه|میشه|می شه|چند میدن|چند میدن|کیه|کجاست)\b", norm):
+        return True
     if any(mark in text for mark in ("؟", "?")):
-        return len(norm.split()) <= 8
+        return True
     return False
 
 
@@ -511,16 +514,70 @@ def professor_profile(store, name: str) -> dict | None:
     }
 
 
-def professor_answer(store, name: str, course: str = "") -> str | None:
-    """نتیجه‌گیری ربات درباره‌ی یک استاد (بدون نقل‌قول از پیام‌ها)."""
+def _sample_opinions(comments: list[str], limit: int = 2,
+                     professor_name: str = "", store=None) -> list[str]:
+    """چند تجربه‌ی واقعی و مرتبط را عیناً نشان بده؛ پرسش و داده‌ی شخصی حذف می‌شود."""
+    selected: list[str] = []
+    seen: set[str] = set()
+    keys = _name_keys(store) if store is not None and professor_name else {}
+    for comment in prioritize_comments(comments):
+        text = re.sub(r"\s+", " ", comment).strip()
+        norm = normalize(text)
+        if not text or not _is_opinion(text) or norm in seen:
+            continue
+        # پیام‌های انتخاب واحد/لینک گروه نظر درباره‌ی کیفیت استاد نیستند.
+        if re.search(r"#لینک|کد ارائه|ترم تحصیلی|تایم:|لینک گروه|بردارم|حذفه|حذف کنم", text):
+            continue
+        if professor_name and keys:
+            attribution = _attributed(text, keys, professor_name)
+            # پیام درباره‌ی استاد دیگری را به‌عنوان شاهد این استاد نیاور.
+            named = [name for name in keys.values() if normalize(name) in norm]
+            if named and attribution.get(professor_name, 0) == 0:
+                continue
+        # رکوردهای ساختاریافته‌ی فرم استادشناسی «نظر آزاد» نیستند.
+        if "🎓" in text and "📒" in text and "📖" in text:
+            continue
+        # پیام‌های دارای شماره‌تلفن/شناسه یا لینک را برای حفظ حریم خصوصی نیاور.
+        if re.search(r"https?://|t\.me/|@[\w]+|\b\d{7,}\b", text, re.I):
+            continue
+        if len(text) > 220:
+            text = text[:217].rsplit(" ", 1)[0] + "…"
+        selected.append(text)
+        seen.add(norm)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def professor_courses_answer(store, name: str, course: str = "") -> str:
+    """پاسخ کوتاهِ فقط-ارائه برای پرسش‌های ساعت/فهرست کلاس‌ها."""
+    rows = courses_for_professor(store, name, limit=6, course_norm=course)
+    if not rows:
+        return f"📚 برای «{name}» ارائه‌ای در جدول این ترم پیدا نکردم."
+    title = f"📚 ارائه‌های «{name}» در «{_cell(course)}»" if course else f"📚 کلاس‌های این ترم «{name}»"
+    return "\n".join([title, *rows])
+
+
+def professor_answer(store, name: str, course: str = "", query: str = "") -> str | None:
+    """پاسخ داده‌محور؛ نظر واقعی برای استادشناسی، برنامه‌ی درسی برای سوال زمان."""
     profile = professor_profile(store, name)
     if profile is None:
         return None
 
-    lines = [
-        f"👤 {profile['name']} · بر پایه‌ی {_fa(profile['comments'])} پیام آرشیو",
-        f"🎯 نتیجه: {profile['verdict']}",
-    ]
+    lines = [f"👤 {profile['name']} · بر پایه‌ی {_fa(profile['comments'])} پیام آرشیو"]
+    source = next(p for p in store.professors if p.norm_name == normalize(name))
+    nq = normalize(query)
+    asks_schedule = bool(re.search(
+        r"چه\s*زمانی|زمان|ساعت|کی\s*(?:ارائه|کلاس)|کلاس(?:ها|های|\s*ها)?\s*(?:کی|چه\s*زمانی|چه\s*ساعتی)|ارائه\s*(?:کی|چه\s*زمانی)",
+        nq,
+    ))
+    opinions = [] if asks_schedule else _sample_opinions(
+        source.comments, professor_name=name, store=store
+    )
+    if opinions:
+        lines.append("💬 نظرهای واقعی دانشجوها (عین متن؛ تجربه‌ها ممکن است متفاوت باشد):")
+        lines.extend(f"“{opinion}”" for opinion in opinions)
+    lines.append(f"🎯 جمع‌بندی آماری: {profile['verdict']}")
 
     scores = profile["scores"]
     if scores:
@@ -709,6 +766,12 @@ def compare_answer(store, names: list[str]) -> str | None:
             lines.append(f"   ⚠️ {profile['warnings'][0]}")
         if not (profile["strengths"] or profile["warnings"]):
             lines.append(f"   ℹ️ {profile['verdict']}")
+        source = next((p for p in store.professors
+                       if p.norm_name == normalize(profile["name"])), None)
+        if source:
+            for opinion in _sample_opinions(
+                    source.comments, limit=1, professor_name=profile["name"], store=store):
+                lines.append(f"   💬 “{opinion}”")
 
     if comparisons:
         parts = []
@@ -886,7 +949,16 @@ def answer(store, query: str, want_model: bool = True) -> str | None:
             need = min(len(tokens), max(1, len(tokens) - 1))
             if overlap >= need and overlap > best_overlap:
                 course_norm, best_overlap = candidate, overlap
-        text = professor_answer(store, named[0], course=course_norm)
+        asks_classes = bool(re.search(
+            r"(?:کلاس(?:ها|های)?|ارائه(?:ها|های)?) .*?(?:کدوما|کدام|چه درس|چیا|کی|ساعت|زمان|این ترم)",
+            nquery,
+        ))
+        asks_schedule = bool(re.search(
+            r"چه\s*زمانی|زمان|ساعت|کی\s*(?:ارائه|کلاس)", nquery
+        ))
+        if asks_classes or asks_schedule:
+            return professor_courses_answer(store, named[0], course=course_norm)
+        text = professor_answer(store, named[0], course=course_norm, query=query)
         if text:
             return text
 

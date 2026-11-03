@@ -225,13 +225,26 @@ def test_fallback():
 
     card = fallback.answer(store, "استاد آذر ابوالقاسمی چطور استادی هستن")
     check("کارت استاد ساخته شد", card and "آذر ابوالقاسمی" in card)
+    check("پرسش ارزشیِ محاوره‌ای به‌عنوان سوال شناخته می‌شود",
+          fallback._is_question("ارزش داره رحیمه نجات حذف کنم معادلات دیفرانسیل بردارم؟"))
+    casual = fallback.answer(store,
+        "ارزش داره رحیمه نجات حذف کنم معادلات دیفرانسیل بردارم چون عاصیمان دیگه نیست؟")
+    check("نام محاوره‌ای «رحیمه» به استاد رحیم می‌رسد",
+          casual and "محمد رحیم" in casual and "ارزیابی ثبت‌شده‌ای" in casual, str(casual)[:160])
     check("نمره‌دهی از فرم استخراج شد", "ارفاق" in card, card[:80])
     check("امتیازهای فرم استخراج شد", "۹.۶ از ۱۰" in card, card[:200])
-    check("نتیجه‌گیری ربات اول پاسخ است", card.startswith("👤") and "🎯 نتیجه:" in card)
-    # هیچ پیام آرشیو نباید عیناً در پاسخ کپی شود (پاسخ باید «نتیجه» باشد)
+    check("نظر واقعی پیش از جمع‌بندی دیده می‌شود",
+          card.startswith("👤") and card.index("💬 نظرهای واقعی") < card.index("🎯 جمع‌بندی آماری"))
+    # چند نظر واقعی باید عیناً نمایش داده شود، اما پرسش/اطلاعات شخصی نباید.
     prof = next(x for x in store.professors if "ابوالقاسمی" in x.norm_name)
-    copied = [c[:60] for c in prof.comments if len(c) > 60 and c[:60] in card]
-    check("هیچ پیام آرشیو عیناً کپی نشده", not copied, str(copied[:1]))
+    opinion = fallback._sample_opinions(prof.comments, professor_name=prof.name, store=store)
+    check("نظر واقعی از آرشیو نمایش داده شد",
+          bool(opinion) and all(item in card for item in opinion), str(opinion))
+    check("پرسش‌های آرشیو به‌عنوان نظر نمایش داده نشد",
+          not any(c[:50] in card for c in prof.comments if fallback._is_question(c)))
+    check("پیام‌های اطلاع‌رسانی/ثبت‌نام نقل‌قول نشده‌اند",
+          "کد ارائه" not in card and "ترم تحصیلی" not in card and "#لینک" not in card)
+    check("لینک یا شناسه در کارت نظرها نیست", "t.me/" not in card and "@" not in card)
     check("درس این ترم اضافه شد", "مبانی کارآفرینی" in card)
 
     course = fallback.answer(store, "ساختمان داده و الگوریتم ها")
@@ -239,11 +252,53 @@ def test_fallback():
 
     check("سوال بی‌ربط ⇒ None", fallback.answer(store, "سلام") is None)
 
+    # سنجش پاسخ سریع روی همان پرسش‌های مجموعه‌ی طلایی مدل.
+    from retrieval import normalize
+    with open("eval/golden.json", encoding="utf-8") as handle:
+        golden = json.load(handle)["items"]
+    fast_results = [(case, fallback.answer(store, case["query"]) or "") for case in golden]
+    uncovered = [case["id"] for case, text in fast_results
+                 if not text or any(normalize(entity) not in normalize(text)
+                                    for entity in case["entities"])]
+    check("حالت سریع برای پرسش‌های طلایی پاسخ مرتبط دارد",
+          not uncovered, str(uncovered))
+    check("حالت سریع هر ۱۰ سناریوی مقایسه/استاد/درس را پوشش می‌دهد",
+          len(fast_results) == len(golden) and all(text for _, text in fast_results),
+          f"{sum(bool(text) for _, text in fast_results)}/{len(golden)}")
+    experience = fallback.answer(store, "کسی تجربه‌ای از منصف داره؟") or ""
+    check("«تجربه‌ای از منصف» با استادهای تصادفی مقایسه نمی‌شود",
+          experience.startswith("👤 مرجان منصف") and "⚖️ مقایسه" not in experience)
+    schedule = fallback.answer(store, "ساختمان داده با همامی چه ساعتیه؟") or ""
+    check("سوال ساعت کلاس، فقط فهرست ارائه‌ها را می‌دهد",
+          schedule.startswith("📚") and "💬 نظرهای واقعی" not in schedule)
+    class_list = fallback.answer(store, "کلاسهای غلامیان این ترم کدوماست؟") or ""
+    check("درخواست فهرست کلاس استاد، پاسخ را به کلاس‌ها محدود می‌کند",
+          class_list.startswith("📚") and "💬 نظرهای واقعی" not in class_list)
+    professor_misses = []
+    for teacher in store.professors:
+        query = f"استاد {teacher.name.split()[-1]} چطوره؟"
+        answer_text = fallback.answer(store, query) or ""
+        if normalize(teacher.name) not in normalize(answer_text):
+            professor_misses.append(teacher.name)
+    check("آزمون پرسش استاد برای هر ۳۵ شناسنامه",
+          not professor_misses, str(professor_misses[:5]))
+    course_misses = []
+    for course_name in dict.fromkeys(str(x).strip() for x in store.courses["نام درس"]
+                                     if str(x).strip()):
+        answer_text = fallback.answer(store, f"{course_name} چه زمانی ارائه شده؟") or ""
+        if normalize(course_name) not in normalize(answer_text):
+            course_misses.append(course_name)
+    check("آزمون زمان‌بندی برای هر ۴۰ نام درس",
+          not course_misses, str(course_misses[:5]))
+
     # --- استاد + درس: فقط ارائه‌های همان درس
     both = fallback.answer(store, "ساختمان داده و الگوریتم ها با همامی چه زمانی ارائه شده؟")
     check("پرسش استاد+درس فقط همان درس را می‌آورد",
           both and "ساختمان داده" in both and "اصول سیستم" not in both, str(both)[:120])
-    check("سرتیتر به درس محدود شده", both and "ارائه‌های این استاد در" in both)
+    check("سوال زمان‌بندی پاسخ کوتاه و ویژه‌ی کلاس می‌گیرد",
+          both and both.startswith("📚") and "ساختمان داده" in both)
+    check("سوال صرفاً زمان‌بندی نقل‌قول‌های استادشناسی نمی‌آورد",
+          both and "💬 نظرهای واقعی" not in both)
 
     # --- نام کوتاه/متفاوت درس در پرسش مجاز بودن
     alias = fallback.answer(store, "داده کاوی برای ورودی ۱۴۰۱")
@@ -264,10 +319,11 @@ def test_fallback():
           cmp and cmp.index("محمد غلامیان") < cmp.index("ابوالفضل تهرانیان"), str(cmp)[:120])
     check("مقایسه رأی مستقیم آرشیو را نشان می‌دهد",
           cmp and "مقایسه‌های مستقیم" in cmp, str(cmp)[:200])
-    # همان قاعده‌ی ضدکپی، برای پاسخ مقایسه‌ای هم برقرار است
-    gholamian = next(x for x in store.professors if "غلامیان" in x.norm_name)
-    leaked = [c[:60] for c in gholamian.comments if len(c) > 60 and c[:60] in (cmp or "")]
-    check("مقایسه هم پیام آرشیو را کپی نمی‌کند", not leaked, str(leaked[:1]))
+    # مقایسه هم باید نظر واقعیِ پالایش‌شده‌ی هر استاد را به‌عنوان شاهد نشان دهد.
+    check("مقایسه نقل‌قول واقعی را به‌عنوان شاهد می‌آورد",
+          "💬 “" in cmp and "عین متن" not in cmp, str(cmp)[-500:])
+    check("مقایسه نقل‌قول را کوتاه نگه می‌دارد",
+          all(len(line) <= 240 for line in cmp.splitlines() if "💬 “" in line))
 
     # --- وقتی فقط یکی از دو استاد داده دارد، صریح گفته می‌شود
     uneven = fallback.answer(store, "همامی یا رحیم")
@@ -778,6 +834,8 @@ def test_api_provider():
     api_llm.API_KEY = "test-key"
     api_llm.API_MODEL = "test/model-1"
     try:
+        check("شناسه‌ی پیش‌فرض OpenRouter معتبر است",
+              "qwen-2.5-72b-instruct" in old[2])
         check("با کلید، API فعال است", api_llm.enabled())
 
         text = api_llm.generate([{"role": "user", "content": "سلام"}])

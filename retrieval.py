@@ -39,7 +39,7 @@ STOPWORDS = set(
     چطوره چطور چطوری خوبه خوب بد چیه نیست هستش داشتم داشته بگیرم بردارم اخذ اخذش
     واحد واحده واحدم چند چندتا کجا کِی کی چرا آیا میخوام می‌خوام میخواستم میشه
     یکی یه یه‌کم خیلی بچه بچه‌ها بچه ها دوستان کسی کسی‌ میدونه می‌دونه بدونم بگین
-    اطلاعات راهنمایی کمک لطفاً دوست داشتم داشتید دارید کردم کردم کدام
+    اطلاعات راهنمایی کمک لطفاً دوست داشتم داشتید دارید کردم کردم کدام ای
     کلاس کیه چیه چطور
     استادی استادیه استادش هستن هستید چجور چجوری بگی بگه کسی بچه""".split()
 )
@@ -313,7 +313,12 @@ class DataStore:
             name_score = 0
             body_score = 0
             for kw in kws:
-                if kw in prof.norm_name:
+                # غلط محاوره‌ای/پسوند اضافه در نام: «رحیمه» → «رحیم».
+                name_tokens = prof.norm_name.split()
+                name_hit = kw in name_tokens
+                if not name_hit and len(kw) >= 5 and kw.endswith("ه"):
+                    name_hit = kw[:-1] in name_tokens
+                if name_hit:
                     name_score += 12
                 hits = prof.norm_body.count(kw)
                 if hits:
