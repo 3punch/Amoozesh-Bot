@@ -1,84 +1,49 @@
-# 🎓 دستیار هوشمند انتخاب واحد
+# 🎓 Course Registration Assistant
 
-[![ربات ۲۴/۷](https://github.com/3punch/Amoozesh-Bot/actions/workflows/bot.yml/badge.svg?branch=main)](https://github.com/3punch/Amoozesh-Bot/actions/workflows/bot.yml)
-[![کیفیت مدل](https://github.com/3punch/Amoozesh-Bot/actions/workflows/model-check.yml/badge.svg?branch=main)](https://github.com/3punch/Amoozesh-Bot/actions/workflows/model-check.yml)
+[![Telegram Bot](https://github.com/3punch/Amoozesh-Bot/actions/workflows/bot.yml/badge.svg?branch=main)](https://github.com/3punch/Amoozesh-Bot/actions/workflows/bot.yml)
+[![Model Quality](https://github.com/3punch/Amoozesh-Bot/actions/workflows/model-check.yml/badge.svg?branch=main)](https://github.com/3punch/Amoozesh-Bot/actions/workflows/model-check.yml)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f.svg)](LICENSE)
+[![MIT License](https://img.shields.io/badge/License-MIT-2ea44f.svg)](LICENSE)
 
-**از «کی خوبه؟» تا «این درس برای ورودی من مجازه؟» — پاسخ مستند از داده‌های واقعی انتخاب واحد.**
+**A Persian-language Telegram assistant that turns course schedules, enrollment rules, curriculum data, and student feedback into useful, evidence-backed answers.**
 
-یک ربات تلگرامی فارسی که جدول ارائه‌ها، چارت، قوانین ورودی‌ها و تجربه‌ی دانشجوها را
-به یک پاسخ قابل‌استفاده تبدیل می‌کند. مسیر سریع، بدون مدل و بدون هزینه‌ی API کار می‌کند؛
-برای استادشناسی، نقل‌قول‌های منتخب را از آرشیو نشان می‌دهد و آمار/جمع‌بندی را جداگانه
-شفاف می‌کند. تحلیل زبانی عمیق هم به‌صورت انتخابی در دسترس است.
+The project is more than a chatbot connected to an LLM. Course eligibility, schedules, and capacities come from structured data. Instructor feedback is supported by archived student comments and explicit statistics. Optional model-generated analysis is checked for unsupported dates, scores, and class times before it is shown.
 
-> **چیزی که این پروژه را متمایز می‌کند:** فقط یک چت‌بات متصل به مدل نیست. حکم مجازبودن،
-> زمان‌بندی و ظرفیت از داده‌ی ساختاریافته می‌آیند؛ تجربه‌های استادشناسی به متن واقعی
-> دانشجوها و شمارش‌های قابل‌ردیابی متصل‌اند؛ و ادعاهای عددی مدل پیش از نمایش اعتبارسنجی
-> می‌شوند. وقتی داده کافی نیست، ربات باید همین را بگوید.
+## Highlights
 
-### در یک نگاه
-
-| | قابلیت |
+| Capability | Description |
 |---|---|
-| 📚 دامنه | ارائه‌های این ترم، استادشناسی، مقایسه‌ی استادها، چارت و قوانین ورودی |
-| ⚡ پاسخ سریع | بدون مدل؛ بازیابی داده + نظرهای واقعی پالایش‌شده، معمولاً زیر یک ثانیه |
-| 🧠 تحلیل عمیق | مدل محلی Qwen در GitHub Actions؛ فقط با درخواست کاربر |
-| 🔐 API ابری | اختیاری و فقط با کلید کاربر؛ بدون کلید کاملاً غیرفعال |
-| 🛡️ قابلیت اتکا | پاسخ داده‌محور حتی هنگام خاموشی مدل؛ بررسی ساعت/سال/امتیاز ساختگی |
-| 🧪 کیفیت | تست آفلاین، مجموعه‌ی طلایی، ارزیابی واقعی مدل و گزارش Actions |
-| 🚀 اجرا | GitHub Actions؛ برای اجرای ربات نیازی به روشن‌بودن سیستم شخصی نیست |
+| 📚 Course information | Current-term offerings, instructors, schedules, capacities, prerequisites, and eligible cohorts |
+| 👩‍🏫 Instructor feedback | Archived student comments, instructor profiles, and side-by-side comparisons |
+| ⚡ Fast, model-free answers | Structured retrieval and deterministic rules; usually under a second |
+| 🧠 Local model analysis | Optional Qwen analysis through Ollama on GitHub Actions; requested by the user |
+| 🔐 Cloud API | Optional OpenAI-compatible endpoint; disabled unless an API key is configured |
+| 🛡️ Grounding and validation | Data-backed answers remain available if a model is unavailable; fabricated dates, scores, and times are rejected |
+| 🧪 Quality checks | Offline tests, a golden question set, model-evaluation workflows, and benchmarks |
+| 🚀 Hosted operation | The bot runs on GitHub Actions; no personal computer needs to stay online |
 
----
+> **Honest limitation:** the fast path is retrieval and rules, not a language model. It prioritizes speed and traceable evidence; it will not match the reasoning or flexibility of a strong API model on every ambiguous question.
 
-## فهرست
+## Example answers
 
-- [نمونه‌ی پاسخ‌ها](#نمونهی-پاسخها)
-- [سه حالت پاسخ: سریع، مدل محلی، API](#سه-حالت-پاسخ-سریع-مدل-محلی-api)
-- [سهمیه‌ی روزانه‌ی هر کاربر](#سهمیهی-روزانهی-هر-کاربر)
-- [کلید API (اختیاری)](#کلید-api-اختیاری)
-- [باهوش‌ترش کردیم (و با عدد می‌سنجیم)](#باهوشترش-کردیم-و-با-عدد-میسنجیم)
-- [معماری](#معماری)
-- [شروع سریع (بدون نصب چیزی روی سیستم خودت)](#شروع-سریع)
-- [اجرای محلی](#اجرای-محلی-توسعه)
-- [پیکربندی](#پیکربندی)
-- [داده‌های پروژه](#دادههای-پروژه)
-- [تضمین کیفیت پاسخ](#تضمین-کیفیت-پاسخ)
-- [تست و بنچمارک](#تست-و-بنچمارک)
-- [خوشه‌ی گردش‌کارها (Workflows)](#خوشهی-گردشکارها)
-- [عیب‌یابی](#عیبیابی)
-- [محدودیت‌ها](#محدودیتها)
-- [ساختار پروژه](#ساختار-پروژه)
+The bot replies in Persian. These abbreviated examples show its actual response style.
 
----
+### Instructor feedback
 
-## نمونه‌ی پاسخ‌ها
-
-**۱) پرسش استادشناسی**
-
-```
+```text
 👤 آذر ابوالقاسمی · بر پایه‌ی ۲۳ پیام آرشیو
 💬 نظرهای واقعی دانشجوها (عین متن؛ تجربه‌ها ممکن است متفاوت باشد):
 “استادش رو باهاش این اصول مدیریت داشتم اکی بود واقعا آذر ابوالقاسمی”
 “اگه استادش آذر ابوالقاسمی باشه خیلی راحته و میشه خوب نمره گرفت”
 🎯 جمع‌بندی آماری: استاد خوبی است؛ ارزیابی دانشجویان مثبت و یکدست است.
 📊 ارزیابی دانشجویان: ۹.۶ از ۱۰
-   تدریس ۹ · تسلط ۱۰ · انتقال مطالب ۱۰ · مدیریت کلاس ۹ · پاسخ‌گویی ۱۰
-
-✅ نقاط قوت
-• نمره‌دهی: دست باز و با ارفاق
-• منابع معرفی‌شده برای امتحان کافی است
-
-⚠️ نکات مهم
-• حضور و غیاب برگزار می‌شود و برایش مهم است
-
-📚 ارائه‌ی این ترم
-• مبانی کارآفرینی — دوشنبه ۱۱:۲۰–۱۲:۱۰ و ۱۲:۴۰–۱۳:۳۰ · ظرفیت ۵۵ · همه‌ی ورودی‌ها
 ```
 
-**۲) پرسش مجاز بودن درس**
+The fast answer shows selected, filtered archive comments before the statistical summary. Comments are presented as individual experiences, not as universal claims.
 
-```
+### Course eligibility
+
+```text
 🎯 نتیجه: «هوش مصنوعی» برای ورودی ۱۴۰۴ مجاز نیست ❌
 این درس فقط برای ورودی ۱۴۰۳ مجاز است و برای این ورودی باز نیست.
 
@@ -86,493 +51,240 @@
 • هوش مصنوعی — پویا درخشان برجویی · چهارشنبه ۱۳:۳۰–۱۷:۴۰ · ظرفیت ۵۵ · فقط ورودی ۱۴۰۳
 ```
 
-**۳) پرسش زمان‌بندی (استاد + درس)**
+### Instructor comparison
 
-```
-👤 محمد همامی · بر پایه‌ی ۱۵ پیام آرشیو
-🎯 نتیجه: نظرات درباره‌ی این استاد متناقض است و جمع‌بندی قطعی ممکن نیست.
-
-⚠️ نکات مهم
-• حضور و غیاب برایش مهم و اجباری است
-• برخورد ضعیف گزارش شده
-
-📚 ارائه‌های این استاد در «ساختمان داده ها و الگوریتم ها»
-• ساختمان داده ها و الگوریتم ها — یکشنبه ۱۴:۲۰–۱۷:۴۰ · ظرفیت ۵۵ · فقط ورودی ۱۴۰۴
-• ساختمان داده ها و الگوریتم ها — سه شنبه ۱۰:۳۰–۱۲:۱۰ و ۱۲:۴۰–۱۴:۲۰ · ظرفیت ۵۵ · فقط ورودی ۱۴۰۴
-```
-
-**۴) مقایسه‌ی دو استاد**
-
-```
+```text
 ⚖️ مقایسه‌ی محمد غلامیان، ابوالفضل تهرانیان
 🎯 نتیجه: نظرهای آرشیو به «محمد غلامیان» متمایل‌تر است؛ ۲ مقایسه‌ی مستقیم ثبت شده و نتیجه به سود اوست.
 
 👤 محمد غلامیان — ۲۵ پیام · ۲ نظر مثبت · ۶ نظر منفی
-   ℹ️ نظرهای ثبت‌شده بیشتر منفی است؛ با احتیاط انتخاب کن.
 👤 ابوالفضل تهرانیان — ۲۴ پیام · ۳ نظر مثبت · ۷ نظر منفی
-   ⚠️ نمره‌دهی سختگیرانه
-
-🔁 مقایسه‌های مستقیم: ۲ به نفع محمد غلامیان · ۱ به زیان ابوالفضل تهرانیان
-
-📚 این ترم
-• محمد غلامیان — مبانی آنالیز عددی — یکشنبه ۰۸:۰۰–۱۰:۳۰ · ظرفیت ۵۵ · فقط ورودی ۱۴۰۴
-• ابوالفضل تهرانیان — مبانی ماتریس ها و جبر خطی — دوشنبه ۰۸:۰۰–۱۰:۳۰ · ظرفیت ۴۰ · همه‌ی ورودی‌ها
 ```
 
-**۵) چیزی در داده نیست**
+### Schedule lookup
 
+A schedule question returns the relevant course offerings without unrelated instructor-review text:
+
+```text
+📚 کلاس‌های این ترم «محمد همامی»
+• ساختمان داده ها و الگوریتم ها — یکشنبه ۱۴:۲۰–۱۷:۴۰ · ظرفیت ۵۵ · فقط ورودی ۱۴۰۴
+• ساختمان داده ها و الگوریتم ها — سه شنبه ۱۰:۳۰–۱۲:۱۰ و ۱۲:۴۰–۱۴:۲۰ · ظرفیت ۵۵ · فقط ورودی ۱۴۰۴
 ```
-🎯 نتیجه: در داده‌ی این ترم چیزی برای «تحقیق در عملیات ۱۴۰۴» پیدا نکردم.
-ℹ️ داده‌ی فعلی شامل ۱۰۳ ردیف ارائه‌ی درس و ۳۵ شناسنامه‌ی استاد است؛ شاید نام درس یا استاد کمی متفاوت نوشته شده باشد.
-```
 
----
+## Answer modes
 
-## سه حالت پاسخ: سریع، مدل محلی، API
-
-| | **سریع** | **🧠 مدل محلی** | **⚡ API** |
+| | **Fast** | **🧠 Local model** | **⚡ API** |
 |---|---|---|---|
-| چطور فعال می‌شود | همیشه، خودکار | دکمه‌ی زیر پاسخ یا `/deep` | دکمه‌ی زیر پاسخ یا `/api` |
-| سهمیه‌ی هر کاربر | نامحدود | **۳ بار در روز** | **۱ بار در روز** |
-| زمان پاسخ | زیر ۱ ثانیه | ۳ تا ۶ دقیقه (CPU رانر) | معمولاً ۵ تا ۳۰ ثانیه |
-| چه چیزی می‌خواند | داده‌ی ساختاریافته | متن کامل نظرها + شواهد کلیدی | همان زمینه، با مدل قوی‌تر |
-| نیاز به کلید | ندارد | ندارد | **دارد** (`OPENROUTER_API_KEY`) |
-| اگر خطا بدهد | — | پاسخ معتبر داده می‌ماند + دلیل | همان؛ و سهمیه برمی‌گردد |
+| How to use | Automatic | Button below an answer or `/deep` | Button below an answer or `/api` |
+| Daily per-user limit | Unlimited | **3 successful requests** | **1 successful request** |
+| Typical latency | Usually under 1 second | Several minutes on a CPU runner | Depends on the provider; typically seconds |
+| Evidence | Structured records and selected archived comments | Full relevant comments, extracted evidence, and structured data | Same analysis context, using the configured provider |
+| API key required | No | No | **Yes** |
+| Failure behavior | — | Data-backed answer remains available | Data-backed answer remains available; infrastructure failures refund quota |
 
-هر سه حالت از یک موتور اعتبارسنجی رد می‌شوند: ساعت، سال و امتیاز ساختگی نمایش داده نمی‌شود.
+Model analysis is opt-in. Send a question to get the fast answer, then use a button or a command such as:
 
-### چطور از حالت‌های عمیق استفاده کنم؟
-
-۱. هر پرسشی بفرست؛ پاسخ سریع می‌آید و زیرش دکمه‌ها با **سهمیه‌ی باقی‌مانده**:
-   `🧠 تحلیل مدل · ۳ از ۳ امروز` و `⚡ تحلیل با API · ۱ از ۱ امروز`
-۲. دکمه را بزن؛ همان پیام به «در حال تحلیل…» تغییر می‌کند و بعد با نتیجه جایگزین
-   می‌شود. دکمه تا ۳۰ دقیقه معتبر و یک‌بار مصرف است.
-۳. یا از اول: `/deep غلامیان یا تهرانیان؟` یا `/api غلامیان یا تهرانیان؟`
-
-> دکمه‌ی ⚡ فقط وقتی دیده می‌شود که کلید API تنظیم شده باشد.
-
-### مدل دقیقاً چه می‌کند؟
-
-- **متن کامل** نظرها را می‌خواند، نه خلاصه‌ی ماشینی. به آن گفته می‌شود لحن خودمانی و
-  کنایه‌ای دانشجوها را بفهمد: «تاس می‌ندازه» = سؤال امتحان شانسی است،
-  «موجب سلامتیست» = توصیه می‌کنند برنداری.
-- جمله‌هایی که هم از دو استاد حرف می‌زنند را **به هر کدام جداگانه** نسبت می‌دهد.
-- برای پرسش مقایسه‌ای، **یکی را انتخاب می‌کند** و دلیلش را می‌گوید؛ اگر داده اجازه
-  ندهد، همان را صریح می‌گوید (بدون پاسخ مبهم).
-- در **پاسخ سریع** چند نظر واقعی و پالایش‌شده را عیناً نشان می‌دهد؛ در **تحلیل عمیق**
-  مدل متن کامل را می‌خواند و جمع‌بندی می‌کند. نقل‌قول‌های سریع، با برچسب آرشیوی و
-  بدون لینک/شناسه‌ی طولانی نمایش داده می‌شوند.
-
-نمونه‌ی خروجی:
-
-```
-🧠 تحلیل مدل (qwen2.5:7b)
-
-نتیجه: بین این دو، غلامیان انتخاب کم‌ریسک‌تری است.
-• چند نفر می‌گویند درست‌تر نمره می‌دهد و کلاسش شاد است.
-• تهرانیان متهم است که سؤال امتحان را شانسی انتخاب می‌کند و جواب سؤال‌ها را
-  به کتاب ارجاع می‌دهد.
-• با این حال هر دو نقد جدی گرفته‌اند؛ اگر ساعت کلاس برایت مهم است، تهرانیان
-  گزینه‌ی بهتر برنامه‌ریزی است.
-
-📊 داده‌ی پایه: محمد غلامیان: ۲ مثبت / ۶ منفی از ۲۵ پیام · ابوالفضل تهرانیان: ۳ مثبت / ۷ منفی از ۲۴ پیام
+```text
+/deep غلامیان یا تهرانیان؟
+/api غلامیان یا تهرانیان؟
 ```
 
-### کیفیت واقعی مدل (اندازه‌گیری‌شده، نه ادعا)
+The API option is only shown when an API key is configured. Callback buttons are single-use and expire after 30 minutes.
 
-سه پرسش واقعی با `qwen2.5:7b` روی runner گیت‌هاب اجرا شد (خروجی خام در Issue
-«گزارش حالت تحلیل با مدل»؛ با `Actions → Deep Mode Check → Run workflow` دوباره اجرا می‌شود):
+## How model analysis is kept grounded
 
-| پرسش | زمان | خروجی مدل |
-|---|---|---|
-| غلامیان یا تهرانیان؟ | ۳۴۳ ثانیه | دو بولت درباره‌ی هر دو، ولی **برنده را صریح انتخاب نکرد** |
-| استاد آذر ابوالقاسمی | ۱۶۳ ثانیه | درست: تسلط بالا، حضور مهم، نمره‌دهی با ارفاق (با یک واژه‌ی مخدوش) |
-| استاد ایزدیخواه | ۱۲۷ ثانیه | ضعیف: یک برداشت اشتباه درباره‌ی نمره و حضور |
+- The analysis prompt asks for a direct Persian answer, not a raw dump of comments.
+- Key evidence and numerical summaries are supplied alongside relevant full comments.
+- Comments that mention multiple instructors are attributed by clause where possible.
+- The result validator rejects unsupported class times, years, scores, and malformed/non-Persian output.
+- If a model fails or its answer is rejected, the bot keeps the data-backed response instead of presenting the rejected answer.
 
-نتیجه‌ی صادقانه: `qwen2.5:7b` روی CPU **کار می‌کند ولی در فهم کنایه‌ی فارسی متوسط است**.
-برای همین سه سد گذاشته‌ایم:
+These safeguards reduce avoidable errors; they do **not** guarantee that every qualitative interpretation is correct.
 
-1. **حکم داده همیشه زیر تحلیل می‌آید** (`🎯 حکم داده (بدون مدل)`) تا قضاوت اشتباه مدل
-   جای نتیجه‌ی محاسبه‌شده را نگیرد.
-2. **خروجی مخدوش رد می‌شود**: متن غیرفارسی یا مخلوط لاتین/فارسی (مثل `آذرaboالقاسمی`)
-   به‌عنوان خطا برگردانده می‌شود و همان پاسخ داده نمایش می‌یابد.
-3. **اعداد و ساعت ساختگی** پیش از نمایش رد می‌شوند.
+## Model quality and performance
 
-اگر می‌خواهی مدل بهتری امتحان کنی:
-`Actions → Deep Mode Check → Run workflow` با `model: qwen3:8b` — و خروجی را با همین جدول مقایسه کن.
+A previous run of `qwen2.5:7b` on a GitHub Actions CPU runner took approximately 127–343 seconds for three sample questions. Results were mixed: it handled some instructor questions, but missed a direct winner in a comparison and made a weak interpretation on another question. The local model is therefore optional rather than part of the fast path.
 
-### مدل کجا ذخیره می‌شود؟ (چرا در ریپو نیست)
+Use the `Deep Mode Check` workflow to run fresh examples or evaluate the golden set. Treat those reports as measurements for the specific run/model—not as a general accuracy guarantee.
 
-کوتاه: **در ریپوی گیت گذاشتن مدل ممکن نیست و به‌صرفه هم نیست**؛ به‌جایش از کش Actions
-استفاده می‌شود و دانلود فقط یک‌بار (یا بعد از پاک‌شدن کش) انجام می‌شود.
+### Model caching
 
-| گزینه | عدد واقعی | نتیجه |
-|---|---|---|
-| کامیت فایل مدل در ریپو | هر فایل بیش از **۱۰۰ مگابایت** را گیت‌هاب رد می‌کند؛ مدل `qwen2.5:7b` حدود **۴.۷ گیگابایت** است | ❌ اصلاً push نمی‌شود |
-| Git LFS | سهمیه‌ی رایگان: **۱ گیگابایت فضا و ۱ گیگابایت پهنای‌باند در ماه** | ❌ برای ۴.۷ گیگ کافی نیست |
-| کش Actions (انتخاب‌شده) | سهمیه‌ی محدود Actions Cache؛ ممکن است در اثر سیاست نگه‌داری/فشار فضا پاک شود | ✅ معمولاً پس از کش، دانلود تکراری لازم نیست؛ تضمین دائمی نیست |
-| بدون هیچ ذخیره‌سازی | هر اجرا ۴.۷ گیگ دانلود | ❌ همان چیزی که نمی‌خواهی |
+Ollama model files are **not stored in the Git repository**. The bot workflow uses the GitHub Actions cache and checks whether the model is already present before calling `ollama pull`. A cache hit normally avoids downloading the model again, but Actions caches are not permanent: GitHub may evict a cache, so a future download cannot be ruled out. For persistent model storage, use an always-on host with persistent disk; GitHub-hosted runners are ephemeral.
 
-نکته‌ی مهم: حتی اگر مدل در ریپو بود، هر اجرای Actions باید ریپو را clone کند و همان
-۴.۷ گیگ را دوباره دانلود می‌کرد — یعنی نه‌فقط کمکی نمی‌کرد، کندتر هم می‌شد.
+## Daily quotas
 
-**چه کاری انجام شده**
+Quotas are keyed by Telegram user ID and reset at midnight Tehran time.
 
-1. کش با کلید ثابت `ollama-qwen2-5-7b-v3` و `restore-keys: ollama-` → کش قبلی هم بازیابی می‌شود.
-2. قبل از دانلود، وجود مدل بررسی می‌شود: اگر در کش بود، پیام
-   «✅ مدل از کش موجود است؛ دانلودی لازم نیست» می‌آید و `ollama pull` اجرا **نمی‌شود**.
-3. اگر دانلود یا نصب شکست بخورد، job نمی‌میرد: ربات در **حالت سریع** بالا می‌آید
-   و فقط دکمه‌ی تحلیل مدل نمایش داده نمی‌شود.
+| Mode | Limit |
+|---|---:|
+| Local deep analysis | 3 per user per day |
+| Cloud API analysis | 1 per user per day |
+| Fast answers | Unlimited |
 
-**کِی دوباره دانلود می‌شود؟** فقط اگر کش پاک شده باشد؛ گیت‌هاب کش را بعد از
-۷ روز بدون استفاده یا وقتی سهمیه‌ی ۱۰ گیگ پر شود حذف می‌کند. این ربات هر ~۵ ساعت
-اجرا می‌شود، پس عملاً کش همیشه داغ است.
+Quota state is persisted to the `bot-state` branch when configured. Infrastructure failures refund the relevant deep/API quota. A model response that ran but failed answer validation still consumes quota.
 
-**اگر می‌خواهی هیچ دانلودی نباشد:** `DEEP_MODE: "0"` در `bot.yml` → اصلاً Ollama نصب
-نمی‌شود و ربات فقط با پاسخ سریع کار می‌کند. یا مدل سبک‌تر بگذار:
-`MODEL_NAME: qwen2.5:3b` (حدود ۱.۹ گیگ، کیفیت پایین‌تر).
+> Telegram user IDs are not strong identity verification. A person can use another Telegram account to obtain a separate quota.
 
-### چرا مدل در هر پیام صدا زده نمی‌شود؟
+## Deploy on GitHub Actions
 
-چون روی runner گیت‌هاب (CPU، بدون GPU) سرعت تولید حدود ۳ تا ۴ توکن بر ثانیه است؛
-یعنی هر تحلیل مدل چند دقیقه طول می‌کشد. برای همین:
+The repository is configured to run the bot through GitHub Actions. **Netlify is not suitable for hosting this bot**: this is a long-running Python Telegram polling process, not a static website.
 
-- مسیر پیش‌فرض سریع می‌ماند تا ربات قابل استفاده باشد،
-- و مدل فقط وقتی صدا زده می‌شود که **خودت** بخواهی.
+1. Create a Telegram bot with [@BotFather](https://t.me/BotFather).
+2. In the GitHub repository, open **Settings → Secrets and variables → Actions**.
+3. Add a repository secret named `TELEGRAM_BOT_TOKEN` with the bot token as its value.
+4. Open **Actions → Run Telegram Bot 24/7 → Run workflow** to start it.
 
-اگر جایی GPU داشتی، با `MODEL_SUMMARY=1` همه‌ی پاسخ‌ها از مسیر مدل می‌روند.
+The workflow also runs on pushes to `main` and on a scheduled rotation. It uses concurrency controls to avoid running multiple polling instances at once. GitHub Actions has execution-time limits; this is a scheduled, continuously rotated process—not a dedicated always-on server guarantee.
 
----
+### Enable the optional API
 
-## سهمیه‌ی روزانه‌ی هر کاربر
+1. Create an API key with an OpenAI-compatible provider (the default configuration targets OpenRouter).
+2. Add it in **Settings → Secrets and variables → Actions** as `OPENROUTER_API_KEY`.
+3. The default model is `qwen/qwen-2.5-72b-instruct`. To use another compatible provider, configure `API_BASE_URL` and `API_MODEL` in the workflow.
 
-هر کاربر (بر اساس `user_id` تلگرام) این سهمیه را دارد:
+Never commit API keys or bot tokens to the repository.
 
-| حالت | سهمیه | چرا |
-|---|---|---|
-| 🧠 تحلیل با مدل محلی | **۳ بار در روز** | هر درخواست ۳ تا ۶ دقیقه CPU می‌گیرد |
-| ⚡ تحلیل با API | **۱ بار در روز** | هزینه‌ی توکن دارد؛ یک بار برای پرسش مهم کافی است |
-| پاسخ سریع | نامحدود | از داده ساخته می‌شود، هزینه‌ای ندارد |
+## Run locally (development)
 
-- روز در **نیمه‌شب به وقت تهران** عوض می‌شود.
-- **فقط تحلیلِ موفق سهمیه می‌سوزاند.** اگر مدل بالا نیامد، کلید رد شد یا شبکه قطع
-  شد، سهمیه‌ی مصرف‌شده برمی‌گردد. (پاسخِ ساخته‌شده‌ای که اعتبارسنجی رد کند، سهمیه
-  را می‌سوزاند — چون مدل واقعاً اجرا شده است.)
-- سهمیه‌ی باقی‌مانده روی خود دکمه‌ها نوشته می‌شود و در انتهای پاسخ هم می‌آید.
-- وقتی تمام شد، پیام صریح می‌گوید و گزینه‌ی دیگر را پیشنهاد می‌دهد.
-
-**کجا ذخیره می‌شود؟** ربات در Actions هر چند ساعت روی ماشین تازه اجرا می‌شود، پس
-شمارنده در فایل تنها کافی نیست. هر بار مصرف، وضعیت روی شاخه‌ی **`bot-state`** در
-همان ریپو نوشته می‌شود (با `GITHUB_TOKEN`)؛ شاخه‌ی جدا برای این‌که push روی `main`
-باعث ری‌استارت ربات در وسط کار نشود. اگر توکن/شبکه نبود، شمارنده‌ی محلی
-(`.state/quotas.json`) استفاده می‌شود و ربات هرگز به‌خاطر سهمیه نمی‌خوابد.
-
-تغییر سقف‌ها: در `quota.py`، دیکشنری `LIMITS`:
-
-```python
-LIMITS = {"deep": 3, "api": 1}
-```
-
----
-
-## کلید API (اختیاری)
-
-هیچ‌چیز به آن وابسته نیست؛ بدون کلید، دکمه‌ی ⚡ و `/api` ساده نمایش داده نمی‌شوند.
-
-۱. از سرویس دلخواه یک کلید بگیر (OpenRouter، Groq، DeepSeek، Together یا هر
-   سرویس سازگار با OpenAI).
-۲. `Settings → Secrets and variables → Actions → New repository secret`
-   - نام: `OPENROUTER_API_KEY` — مقدار: کلید
-۳. (اختیاری) در `bot.yml` این‌ها را عوض کن:
-
-```yaml
-API_MODEL: qwen/qwen-2.5-72b-instruct
-API_BASE_URL: https://openrouter.ai/api/v1
-API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-```
-
-> اگر سرویس دیگری داری، فقط `API_BASE_URL` و `API_MODEL` را عوض کن؛ کد با
-> استاندارد `/chat/completions` کار می‌کند.
-
----
-
-## باهوش‌ترش کردیم (و با عدد می‌سنجیم)
-
-سه تغییر که مستقیماً روی کیفیت فهم اثر داشت:
-
-۱. **شواهد کلیدی پیش از متن خام** — پیش از ریختن متن کامل، مهم‌ترین جمله‌های هر
-   استاد (بر اساس امتیاز قطبیت و **نسبت‌دادن بند‌به‌بند** به صاحبش) جدا می‌شوند.
-   مدل کوچک در متن بلند گم می‌شود؛ با این کار سیگنال را اول می‌بیند.
-۲. **پرامپت با نمونه‌ی طلایی** — قالب خروجی سخت‌گیرانه شد: خط اول «نتیجه:»، حداکثر
-   ۴ بولت، بدون لاتین، بدون مارک‌داون؛ به‌همراه دو نمونه‌ی کامل (مقایسه و استادشناسی)
-   تا مدل «یکی را انتخاب کن» را واقعاً انجام دهد.
-۳. **سنجش با مجموعه‌ی طلایی** — `eval/golden.json` ده پرسش با موجودیت‌های انتظاری
-   دارد و `scripts/eval_deep.py` سه معیار عینی را می‌شمارد:
+Python 3.10 or newer is required.
 
 ```bash
-python scripts/eval_deep.py --provider local --limit 5 --show
-python scripts/eval_deep.py --provider api
-```
-
-| معیار | چه چیزی را می‌سنجد |
-|---|---|
-| `format` | خط اول با «نتیجه:» شروع شده (قرارداد خروجی) |
-| `entity` | نام استاد/درسی که پرسیده شد در پاسخ آمده |
-| `verify` | ساعت/سال/امتیاز ساختگی رد نشده باشد |
-
-در Actions هم می‌شود اجرا کرد: `Deep Mode Check → eval_golden = true` (گزارش در Issue).
-با این عدد می‌توان `qwen2.5:7b` را با `qwen3:8b` یا مدل API مقایسه کرد، بی‌آنکه
-حس شخصی قاضی باشد.
-
----
-
-## معماری
-
-```
-                    ┌──────────────────────────────┐
-   پیام تلگرام ───► │ EntekhabVahedBot.py          │  مسیریابی، گروه، شکستن پیام
-                    └──────────────┬───────────────┘
-                                   ▼
-                    ┌──────────────────────────────┐
-                    │ retrieval.py                 │  نرمال‌سازی فارسی، انتخاب
-                    │  • keywords / ranking        │  بخش مرتبط، تحلیل محدودیت
-                    │  • eligibility_info()        │  ورودی‌ها (درس + استاد + ساعت)
-                    └──────────────┬───────────────┘
-                                   ▼
-                    ┌──────────────────────────────┐
-                    │ fallback.py                  │  «موتور نتیجه‌گیری»
-                    │  • professor_answer()        │  استخراج امتیازها، موضوع‌ها،
-                    │  • eligibility_answer()      │  ساخت حکم و جمع‌بندی
-                    │  • courses_answer()          │
-                    └──────────────┬───────────────┘
-                                   ▼
-                  ┌───────────────────────────────┐
-                  │ پاسخ سریع (بدون مدل)          │  زیر ۱ ثانیه
-                  └───────────────┬───────────────┘
-                                  │  دکمه‌ی «🧠 تحلیل با مدل» یا /deep
-                                  ▼
-                  ┌───────────────────────────────┐
-                  │ deep.py + llm.py → Ollama     │  متن کامل نظرها،
-                  │  • فهم و قضاوت مدل            │  اعتبارسنجی عدد/ساعت،
-                  │  • verify_analysis_text()     │  ۲ تا ۴ دقیقه روی CPU
-                  └───────────────────────────────┘
-```
-
-مسیر سریع و مدل محلی به API key نیاز ندارند و به سرویس ابری درخواست نمی‌فرستند؛
-فقط حالت ⚡ API اختیاری است و با کلید کاربر فعال می‌شود.
-
----
-
-## شروع سریع
-
-کل زنجیره (نصب Ollama، مدل، اجرای ربات) داخل GitHub Actions اجرا می‌شود؛
-روی سیستم خودت چیزی نصب نمی‌کنی.
-
-1. **Secret** بساز: `Settings → Secrets and variables → Actions → New repository secret`
-   - نام: `TELEGRAM_BOT_TOKEN` — مقدار: توکن ربات از [@BotFather](https://t.me/BotFather)
-2. **Actions → Run Telegram Bot 24/7 → Run workflow**
-
-### چرخه‌ی اجرا (چرا همیشه روشن می‌ماند)
-
-```
-cron هر ۵ ساعت ──► run در صف ──┐
-                                │  concurrency: همیشه فقط یک نمونه
-run فعال (۵:۲۰ کار) ────────────┘
-   ├─ کرش کرد؟                → scripts/run_bot.sh فوراً دوباره بالا می‌آورد
-   ├─ ۵:۲۰ شد؟                → خاموشی تمیز؛ نمونه‌ی صف‌شده فوراً شروع می‌شود
-   └─ روی main کامیت جدید آمد؟ → خودش خارج می‌شود تا کد تازه فعال شود
-```
-
----
-
-## اجرای محلی (توسعه)
-
-```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 
-# حالت سریع (بدون مدل) — همان چیزی که روی Actions اجرا می‌شود
-TELEGRAM_BOT_TOKEN="توکن" python EntekhabVahedBot.py
-
-# حالت با مدل
-ollama serve &
-ollama pull qwen2.5:7b
-MODEL_SUMMARY=1 TELEGRAM_BOT_TOKEN="توکن" python EntekhabVahedBot.py
+# Run the model-free bot
+TELEGRAM_BOT_TOKEN="your-token" python EntekhabVahedBot.py
 ```
 
-پرسش از خط فرمان، بدون تلگرام:
+To exercise local model analysis, install Ollama separately, pull the configured model, and set the relevant environment variables. Local development is optional; normal bot operation is configured through GitHub Actions.
+
+Ask a question without Telegram:
 
 ```bash
 python ask.py "استاد آذر ابوالقاسمی چطور استادی هستن"
-python ask.py --context "بهینه سازی خطی برای ورودی ۱۴۰۴ مجازه؟"   # فقط زمینه‌ی ارسالی
-python ask.py --json "ساختمان داده و الگوریتم ها"                  # خروجی ماشین‌خوان
+python ask.py --context "بهینه سازی خطی برای ورودی ۱۴۰۴ مجازه؟"
+python ask.py --json "ساختمان داده و الگوریتم ها"
+python ask.py --deep "غلامیان یا تهرانیان؟"
+python ask.py --api "غلامیان یا تهرانیان؟"  # requires API_KEY
 ```
 
----
+## Configuration reference
 
-## پیکربندی
-
-| متغیر | پیش‌فرض | توضیح |
+| Variable | Default | Purpose |
 |---|---|---|
-| `TELEGRAM_BOT_TOKEN` | — | **الزامی** |
-| `MODEL_SUMMARY` | `0` | `1` = افزودن خودکار جمع‌بندی مدل به همه‌ی پاسخ‌ها (نیازمند Ollama) |
-| `DEEP_MODE` | `1` | `1` = دکمه‌ی «تحلیل با مدل» و `/deep` فعال باشند |
-| `DEEP_CONTEXT_CHARS` | `14000` | سقف متن کامل نظرها در حالت مدل |
-| `DEEP_MAX_TOKENS` | `500` | حداکثر طول تحلیل مدل |
-| `DEEP_NUM_CTX` | `8192` | پنجره‌ی زمینه‌ی حالت مدل (بزرگ‌تر از مسیر سریع) |
-| `DEEP_TIMEOUT` | `900` | مهلت هر درخواست تحلیل (ثانیه) |
-| `MODEL_NAME` | `qwen2.5:7b` | نام مدل در Ollama |
-| `THINK` | `0` | حالت استدلال Qwen3 (خاموش = سریع‌تر) |
-| `OLLAMA_HOST` | `http://127.0.0.1:11434` | آدرس سرویس Ollama |
-| `NUM_CTX` | `3072` | پنجره‌ی زمینه |
-| `MAX_TOKENS` | `120` | حداکثر طول پاسخ مدل |
-| `MAX_CONTEXT_CHARS` | `4000` | سقف متن زمینه |
-| `MAX_PROFESSOR_BLOCKS` | `2` | حداکثر شناسنامه‌ی استاد در هر پرسش |
-| `MAX_COURSE_ROWS` | `5` | حداکثر ردیف درس در هر پرسش |
-| `RUN_DURATION_MINUTES` | `0` | خاموشی تمیز پس از این مدت (`0` = نامحدود) |
-| `BOT_RUN_MINUTES` | `320` | مدت کار هر نمونه در Actions |
-| `BOT_JOB_MINUTES` | `335` | کل عمر job (باید < ۳۶۰ باشد) |
-| `API_KEY` | — | کلید سرویس ابری؛ خالی = حالت API خاموش |
-| `API_MODEL` | `qwen/qwen-2.5-72b-instruct` | نام مدل در سرویس ابری |
-| `API_BASE_URL` | `https://openrouter.ai/api/v1` | نقطه‌ی پایانه‌ی سازگار با OpenAI |
-| `API_TIMEOUT` | `120` | مهلت درخواست API (ثانیه) |
-| `API_MAX_TOKENS` | `700` | حداکثر طول پاسخ API |
-| `QUOTA_PERSIST` | `1` | `1` = ذخیره‌ی شمارنده در شاخه‌ی `bot-state` |
-| `QUOTA_STATE_BRANCH` | `bot-state` | شاخه‌ای که سهمیه در آن نوشته می‌شود |
-| `CHECK_UPDATES` | `1` | خروج خودکار با کامیت جدید روی `main` |
+| `TELEGRAM_BOT_TOKEN` | — | Required Telegram bot token |
+| `MODEL_SUMMARY` | `0` | Add a local-model summary automatically to fast answers (`1` enables it) |
+| `DEEP_MODE` | `1` | Enable the local-analysis button and `/deep` |
+| `MODEL_NAME` | `qwen2.5:7b` | Ollama model name |
+| `DEEP_CONTEXT_CHARS` | `14000` | Maximum analysis context size |
+| `DEEP_MAX_TOKENS` | `500` | Maximum local analysis output tokens |
+| `DEEP_NUM_CTX` | `8192` | Local analysis context window |
+| `DEEP_TIMEOUT` | `900` | Local analysis timeout in seconds |
+| `API_KEY` | — | Cloud API key; empty disables the API option |
+| `API_MODEL` | `qwen/qwen-2.5-72b-instruct` | OpenAI-compatible model identifier |
+| `API_BASE_URL` | OpenRouter URL | OpenAI-compatible API base URL |
+| `API_TIMEOUT` | `120` | API request timeout in seconds |
+| `API_MAX_TOKENS` | `700` | Maximum API response tokens |
+| `QUOTA_PERSIST` | `1` | Persist quota state to the state branch |
+| `QUOTA_STATE_BRANCH` | `bot-state` | Branch used for quota persistence |
+| `MAX_CONTEXT_CHARS` | `4000` | Fast-path model context limit |
+| `MAX_PROFESSOR_BLOCKS` | `2` | Maximum professor blocks in fast context |
+| `MAX_COURSE_ROWS` | `5` | Maximum course rows in fast context |
+| `BOT_RUN_MINUTES` | `320` | Runtime for one scheduled bot instance |
+| `BOT_JOB_MINUTES` | `335` | Total job runtime; must remain below the Actions limit |
 
----
+## Data sources
 
-## داده‌های پروژه
-
-| فایل | نقش | شکل داده |
-|---|---|---|
-| `courses.xlsx` | جدول ارائه دروس این ترم | ۱۵ ستون؛ ۱۰۳ ردیف |
-| `professors.txt` | ارزیابی‌های دانشجویان | ۳۵ شناسنامه با فرم استادشناسی و نظرات |
-| `knowledge_base.txt` | محدودیت ورودی‌ها | فهرست دروس ویژه‌ی هر ورودی (درس + استاد + ساعت) |
-| `curriculum.pdf` | چارت درسی | ۱۴ صفحه متن |
-
-**پردازش داده در بارگذاری:** حذف پیام‌های لینکی و تبلیغاتی، نرمال‌سازی «ی/ك»، اعداد فارسی،
-تقسیم بر اساس «شناسنامه استاد»، و اولویت‌دادن به نظرات دارای ارزیابی واقعی.
-
-### نحوه‌ی تصمیم‌گیری درباره‌ی «مجاز بودن»
-
-1. قوانین `knowledge_base.txt` به ساختار «درس + استاد + روز + ساعت ← سال‌های مجاز» تبدیل می‌شوند.
-2. هر ردیف جدول با این قوانین تطبیق داده می‌شود (ساعت‌ها باید دقیقاً یکی باشند، وگرنه
-   ارائه‌های دیگر همان استاد به‌اشتباه محدود می‌شوند).
-3. حکم نهایی از **قانون درس** می‌آید و ارائه‌های باز/بسته از **ردیف‌های واقعی جدول**.
-
----
-
-## تضمین کیفیت پاسخ
-
-| ریسک | سد دفاعی |
+| File | Purpose |
 |---|---|
-| توهم مدل (ساعت/ظرفیت ساختگی) | حکم و اعداد از داده ساخته می‌شوند؛ مدل فقط «جمع‌بندی» می‌نویسد |
-| جمع‌بندی نادرست مدل | `verify_model_text()` هر عدد و ساعت را با داده تطبیق می‌دهد؛ در صورت تخلف، متن دور ریخته می‌شود |
-| کمبود داده | اگر ارزیابی واقعی نبود، صریح گفته می‌شود «ارزیابی روشنی ثبت نشده است» |
-| انتساب نظر به استاد اشتباه | هر بند پیام به استادی نسبت داده می‌شود که در همان بند نامش آمده؛ پیام مشترک دو استاد به هر دو نسبت داده نمی‌شود |
-| توهم مدل در حالت تحلیل | `verify_analysis_text()` ساعت، سال و امتیاز ساختگی را رد می‌کند؛ تحلیل رد‌شده نمایش داده نمی‌شود و پاسخ داده می‌ماند |
-| انتظار طولانی بی‌خبری | پیام «در حال تحلیل…» با زمان تقریبی؛ دکمه یک‌بار مصرف و ۳۰ دقیقه معتبر |
-| ادعای مقایسه‌ی بی‌پشتوانه | مقایسه اول از «مقایسه‌های مستقیم» آرشیو رأی می‌گیرد؛ اگر نداشت، فاصله‌ی ارزیابی‌ها و در نهایت «تفاوت روشنی نیست» |
-| پاسخ خالی / خطای مدل | `fallback.py` همیشه پاسخ آماده دارد |
-| پیام بلند | شکستن خودکار در ۴۰۹۶ کاراکتر |
-| گروه شلوغ | فقط ریپلای یا منشن؛ منشن ربات از متن پرسش حذف می‌شود |
-| تداخل دو نمونه | `concurrency` در Actions با صف، بدون `cancel` |
+| `courses.xlsx` | Current-term course offerings, instructors, schedules, capacity, and cohort fields |
+| `professors.txt` | Instructor profiles and archived student feedback |
+| `knowledge_base.txt` | Cohort-specific course eligibility rules |
+| `curriculum.pdf` | Curriculum and degree-plan reference |
 
----
+The repository data is the source of truth. Update the term-specific files when course offerings or enrollment rules change.
 
-## تست و بنچمارک
+## Architecture
+
+```text
+Telegram update
+      │
+      ▼
+EntekhabVahedBot.py  — command handling, routing, message splitting
+      │
+      ├── retrieval.py — Persian normalization, course/professor matching, eligibility rules
+      │
+      ├── fallback.py  — fast data-backed answers, summaries, selected comments
+      │
+      └── deep.py      — analysis context, local/API provider routing, answer verification
+             ├── llm.py     — Ollama client
+             └── api_llm.py — optional OpenAI-compatible API client
+
+quota.py — per-user daily quotas and optional state-branch persistence
+```
+
+## Testing and evaluation
+
+Create a virtual environment, install dependencies, then run:
 
 ```bash
-python tests/test_offline.py     # ۱۴۰+ بررسی، بدون نیاز به مدل و تلگرام
-python retrieval.py              # بررسی اندازه‌ی زمینه برای چند پرسش نمونه
-python scripts/eval_deep.py --limit 5 --show   # سنجش کیفیت تحلیل (نیازمند مدل)
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+python tests/test_offline.py
+python scripts/eval_deep.py --provider local --limit 5 --show
+python scripts/eval_deep.py --provider api --limit 5 --show
 python bench.py --models qwen2.5:7b,qwen3:8b
 ```
 
-- **تست‌های آفلاین**: بازیابی، موتور نتیجه‌گیری، نگهبان ضدتوهم، سرور جعلی Ollama، و
-  مسیر کامل هندلر تلگرام (شامل «مدل صدا زده نمی‌شود» در حالت پیش‌فرض)، حالت API با
-  سرور جعلی سازگار با OpenAI، و سهمیه‌ی روزانه (مصرف، برگشت، ریست نیمه‌شب، پیام اتمام).
-- **بنچمارک واقعی** روی runner گیت‌هاب با گردش‌کار `Benchmark Models`؛ گزارش هر اجرا
-  به‌صورت Artifact در همان صفحه دانلود می‌شود. اندازه‌گیری‌ها نشان داد گلوگاه **CPU**
-  است نه خانواده‌ی مدل؛ به همین دلیل مدل از مسیر پاسخ فوری بیرون آمده است.
+- `tests/test_offline.py` exercises retrieval, fast answers, model/API clients with fake servers, Telegram handlers, validation, quota logic, and workflow configuration without requiring a live model or Telegram account.
+- The fast-path tests include the golden questions, every instructor profile, and every distinct course name in the current repository data.
+- `eval/golden.json` contains 10 representative questions. `scripts/eval_deep.py` reports format, entity-coverage, and verification checks. Run it with an API provider only if a valid `API_KEY` is configured; API usage may incur provider charges.
+- GitHub Actions workflows provide scheduled bot execution, model checks, deep-mode evaluation, and model benchmarking.
 
----
+## Workflows
 
-## خوشه‌ی گردش‌کارها
+| Workflow | Purpose |
+|---|---|
+| `bot.yml` — Run Telegram Bot 24/7 | Runs and rotates the Telegram bot; checks tests before startup and reports test failures in an issue |
+| `model-check.yml` — Test Model Quality | Runs model quality checks |
+| `deep-check.yml` — Deep Mode Check | Runs example analysis and optionally evaluates the golden set |
+| `bench.yml` — Benchmark Models | Compares selected local models |
 
-| Workflow | رویداد | کار |
-|---|---|---|
-| `bot.yml` — Run Telegram Bot 24/7 | cron هر ۵ ساعت + push روی `main` | اجرای ربات، چرخش خودکار، ری‌استارت روی کرش، ثبت سهمیه در شاخه‌ی `bot-state` |
-| `model-check.yml` — Test Model Quality | تغییر کد/داده + دستی | پرسش‌های نمونه از مدل، گزارش به‌صورت Artifact |
-| `deep-check.yml` — Deep Mode Check | دستی | خروجی واقعی تحلیل مدل + (اختیاری) سنجش مجموعه‌ی طلایی، گزارش در Issue |
-| `bench.yml` — Benchmark Models | دستی + تغییر `bench.py` | مقایسه‌ی چند مدل، گزارش به‌صورت Artifact |
+Generated reports are published as workflow artifacts or issues; they are not committed as build outputs.
 
-> گزارش‌های خودکار در `reports/` ساخته می‌شوند و **در گیت کامیت نمی‌شوند**
-> (به‌صورت Artifact در صفحه‌ی همان اجرا دانلود می‌شوند).
+## Known limitations
 
----
+- Fast retrieval is keyword-based, not embedding-based. Unfamiliar aliases, misspellings, and ambiguous questions may not match correctly.
+- Sentiment and theme counts use rules. Sarcasm and informal Persian can be misclassified; inspect the quoted comments and source data before making a high-stakes decision.
+- Local Qwen analysis runs on CPU in GitHub-hosted runners and can take several minutes. Its qualitative reasoning is not guaranteed to be correct, even when its numeric claims pass validation.
+- The API option requires a user-configured provider key and may incur charges. It is disabled without a key.
+- Non-text messages such as voice notes, images, and stickers are not supported.
+- GitHub Actions is subject to runtime and scheduling limits. The bot is automatically rotated; this is not equivalent to a dedicated always-on server.
+- The assistant can only answer from repository data. Keep the course and eligibility files up to date.
 
-## عیب‌یابی
+## Repository layout
 
-| نشانه | علت احتمالی | راه‌حل |
-|---|---|---|
-| ربات جواب نمی‌دهد | هیچ نمونه‌ای فعال نیست | Actions → Run Telegram Bot 24/7 → Run workflow |
-| «ربات خاموش می‌شود» | اجرای همزمان قبلی در حال گرفتن `getUpdates` | اجرای قدیمی را Cancel کن؛ صف به‌صورت خودکار جایگزین می‌شود |
-| پاسخ‌ها با تأخیر زیاد | `MODEL_SUMMARY=1` روی CPU | مقدار را `0` کن |
-| دکمه‌ی «تحلیل با مدل» دیده نمی‌شود | `DEEP_MODE=0` یا مدل در دسترس نیست | لاگ شروع ربات را ببین: «حالت تحلیل با مدل: فعال/غیرفعال» |
-| دکمه می‌گوید «منقضی شده» | دکمه ۳۰ دقیقه معتبر است و یک‌بار مصرف | پرسش را دوباره بفرست و دکمه‌ی تازه را بزن |
-| «تحلیل مدل با داده هم‌خوان نبود» | مدل عدد/ساعت ساخت | همین رفتار درست است؛ پاسخ داده معتبر می‌ماند. دوباره امتحان کن |
-| هر اجرا مدل دانلود می‌کند | کش Actions پاک شده یا کلید کش عوض شده | اجراهای «Restore model from cache» را ببین؛ `cache-hit` باید `true` باشد |
-| «مدل محلی در دسترس نیست» | Ollama بالا نیامده | `ollama serve` و `ollama pull <مدل>` |
-| workflow وقت اجرا خطا می‌دهد | Secret تنظیم نشده | `TELEGRAM_BOT_TOKEN` را اضافه کن |
-| ربات در گروه جواب نمی‌دهد | منشن یا ریپلای نبوده | به پیام ربات ریپلای کن یا `@username` را بیاور |
-
----
-
-## محدودیت‌ها
-
-- **جست‌وجوی کلیدواژه‌ای** است (بدون embedding)؛ غلط املایی یا نام مستعار ممکن است پیدا نشود.
-- **پاسخ سریع واژه‌محور است**: شمارش نظرها قاعده‌محور انجام می‌شود و کنایه یا شوخی ممکن
-  است اشتباه خوانده شود. برای همین شمار نظرهای مثبت/منفی همیشه کنار نتیجه می‌آید و
-  برای فهم واقعی متن، حالت «تحلیل با مدل» هست.
-- **حالت مدل محلی کند است** (۲ تا ۴ دقیقه روی CPU) و کیفیت فارسی `qwen2.5:7b` خوب است ولی
-  بی‌نقص نیست؛ خروجی‌اش هم فقط از نظر عدد/ساعت اعتبارسنجی می‌شود، پس ممکن است در
-  لحن یا اولویت‌دهی با قضاوت خودت فرق کند.
-- هر job در Actions سقف ۶ ساعت دارد؛ چرخش خودکار ~۱ دقیقه وقفه در لحظه‌ی تعویض ایجاد می‌کند.
-- اگر ۶۰ روز هیچ فعالیتی در مخزن نباشد، GitHub زمان‌بندی‌ها را خودکار غیرفعال می‌کند.
-- ورودی‌های غیرمتنی (ویس، عکس، استیکر) پشتیبانی نمی‌شوند.
-- **حالت API به کلید و هزینه‌ی سرویس بیرونی وابسته است** و به‌طور پیش‌فرض خاموش است.
-- **سهمیه‌ی هر کاربر روی داده‌ی تلگرام است، نه احراز هویت واقعی**؛ کسی با اکانت دوم
-  می‌تواند سهمیه‌ی تازه بگیرد. برای یک ربات درسی کافی است، برای استفاده‌ی عمومی نه.
-- سنجش کیفیت با ۱۰ پرسش انجام می‌شود؛ عدد آن راهنماست، نه تضمین.
-- پاسخ‌ها از داده‌ی همین مخزن می‌آیند؛ با تغییر ترم، `courses.xlsx` و `knowledge_base.txt` باید به‌روز شوند.
-
----
-
-## ساختار پروژه
-
-```
-EntekhabVahedBot.py   نقطه‌ی ورود؛ هندلر تلگرام و چرخه‌ی پاسخ
-retrieval.py          نرمال‌سازی فارسی، انتخاب زمینه، تحلیل محدودیت ورودی‌ها
-fallback.py           موتور نتیجه‌گیری (پاسخ بدون مدل) + نگهبان ضدتوهم
-deep.py               تحلیل با مدل: شواهد کلیدی، فراخوانی محلی/ابری، اعتبارسنجی
-api_llm.py            کلاینت سرویس ابری سازگار با OpenAI (اختیاری)
-quota.py              سهمیه‌ی روزانه‌ی هر کاربر + پایدارسازی روی شاخه‌ی bot-state
-llm.py                کلاینت Ollama
-prompts.py            پرامپت و پیام‌های ثابت
-ask.py                پرسش از خط فرمان
-bench.py              بنچمارک مدل‌ها
-scripts/run_bot.sh    نگه‌دارنده داخل job (ری‌استارت و چرخش)
-eval/golden.json      مجموعه‌ی طلایی سنجش کیفیت (۱۰ پرسش)
-scripts/eval_deep.py  شمارش معیارهای format / entity / verify
-tests/test_offline.py تست‌های آفلاین
-.github/workflows/    سه گردش‌کار بالا + Deep Mode Check (بررسی خروجی واقعی مدل)
+```text
+EntekhabVahedBot.py   Telegram bot entry point and handlers
+retrieval.py          Persian text normalization, matching, and eligibility logic
+fallback.py           Fast data-backed answer engine and validation helpers
+deep.py               Deep analysis context construction and provider routing
+api_llm.py            Optional OpenAI-compatible API client
+quota.py              Per-user daily quotas and persistence
+llm.py                Ollama client
+prompts.py             System and analysis prompts
+ask.py                 Command-line question interface
+bench.py               Model benchmarking utility
+scripts/run_bot.sh     Bot process supervision and scheduled rotation
+eval/golden.json       Golden evaluation questions
+scripts/eval_deep.py   Deep-analysis evaluator
+tests/test_offline.py  Offline regression tests
+.github/workflows/     GitHub Actions automation
 ```
 
----
+## License
 
-## مجوز
-
-[MIT](LICENSE)
+This project is licensed under the [MIT License](LICENSE).
