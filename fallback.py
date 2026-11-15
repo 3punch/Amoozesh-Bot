@@ -205,6 +205,8 @@ THEME_NEGATIVE = {
 SENTIMENT_RULES: tuple[tuple[str, int], ...] = (
     # --- منفی
     (r"خوب\s*(?:نیست|نیسن|نیس|نبود|نبوده|نباشه|نبودن)", -2),
+    # تعریف منفی‌شده: «چیزای خوبی نگفته»، «خوبی نمی‌گه» → نه مثبت
+    (r"خوب(?:ی|ه)?\s*(?:نگفت|نمی\s*گه|نمی\s*گن|نمی\s*گفت|نمیگه|نمیگن)", -2),
     (r"تاس\s*(?:می\s*نداز|مینداز|انداز|انداخت|اندازی|بنداز)", -3),
     (r"رندوم", -2),
     (r"موجب\s*سلامتی", -3),
@@ -914,6 +916,17 @@ def not_found_answer(store, query: str) -> str:
     return "\n".join(lines)
 
 
+def ambiguous_name_answer(professors: list, tokens: list[str]) -> str:
+    """نام کوچک مشترک («محمد») چند استاد را صدا می‌زند ⇒ یافتن نام کامل."""
+    title = "، ".join(f"«{token}»" for token in tokens)
+    lines = [f"❓ {title} بین چند استاد مشترک است؛ کدام یکی را می‌پرسی؟"]
+    lines.extend(f"• {professor.name}" for professor in professors[:6])
+    lines.append("")
+    lines.append("برای پاسخ دقیق، نام خانوادگی استاد را هم بنویس "
+                 "(مثلاً «استاد همامی چطوره؟»).")
+    return "\n".join(lines)
+
+
 def answer(store, query: str, want_model: bool = True) -> str | None:
     """پاسخ نهایی ربات برای یک پرسش، یا None اگر چیزی برای گفتن نبود."""
     info = store.eligibility_info(query)
@@ -934,6 +947,12 @@ def answer(store, query: str, want_model: bool = True) -> str | None:
         comparison = compare_answer(store, named[:3])
         if comparison:
             return comparison
+
+    if not named:
+        # فقط نام کوچک/مشترک آمده («محمد») ⇒ مقایسه یا کارت تصادفی ساخته نشود.
+        ambiguous, tokens = store.ambiguous_names(keywords)
+        if ambiguous:
+            return ambiguous_name_answer(ambiguous, tokens)
 
     if named:
         # اگر نام درس هم در پرسش باشد، فقط ارائه‌های همان درس نمایش داده می‌شود

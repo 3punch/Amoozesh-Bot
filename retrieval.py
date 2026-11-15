@@ -304,20 +304,44 @@ class DataStore:
 
     # ---------- انتخاب بخش‌های مرتبط
 
+    def _name_owner_counts(self) -> dict[str, int]:
+        """تعداد استادهایی که هر توکن نام بین آن‌ها مشترک است."""
+        counts: dict[str, int] = {}
+        for prof in self.professors:
+            for token in set(prof.norm_name.split()):
+                counts[token] = counts.get(token, 0) + 1
+        return counts
+
+    def ambiguous_names(self, kws: list[str]) -> tuple[list[Professor], list[str]]:
+        """استادهایی که سوال فقط با نام مشترکشان («محمد»، «رضا») به آن‌ها اشاره کرده.
+
+        این توکن‌ها بین چند استاد مشترک‌اند، پس سوال را مشخص نمی‌کنند.
+        """
+        owners = self._name_owner_counts()
+        wanted = {token for token, count in owners.items() if count > 1} & set(kws)
+        if not wanted:
+            return [], []
+        hits = [prof for prof in self.professors if wanted & set(prof.norm_name.split())]
+        return sorted(hits, key=lambda prof: prof.name), [kw for kw in kws if kw in wanted]
+
     def _top_professors(self, kws: list[str], limit: int) -> tuple[list[Professor], bool]:
         """مرتبط‌ترین شناسنامه‌ها و این‌که آیا نام استاد صریحاً در سوال آمده یا نه."""
         if not kws or not self.professors:
             return [], False
+        owners = self._name_owner_counts()
         scored: list[tuple[int, int, Professor]] = []
         for prof in self.professors:
             name_score = 0
             body_score = 0
             for kw in kws:
                 # غلط محاوره‌ای/پسوند اضافه در نام: «رحیمه» → «رحیم».
+                # توکن مشترک بین چند استاد («محمد») نام را مشخص نمی‌کند؛ وگرنه
+                # پرسش با نام کوچک، چند استاد بی‌ربط را «صریحاً پرسیده‌شده» می‌کند.
                 name_tokens = prof.norm_name.split()
-                name_hit = kw in name_tokens
+                name_hit = kw in name_tokens and owners.get(kw) == 1
                 if not name_hit and len(kw) >= 5 and kw.endswith("ه"):
-                    name_hit = kw[:-1] in name_tokens
+                    stripped = kw[:-1]
+                    name_hit = stripped in name_tokens and owners.get(stripped) == 1
                 if name_hit:
                     name_score += 12
                 hits = prof.norm_body.count(kw)

@@ -584,9 +584,9 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(api_callback, pattern=r"^api:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
+    # آمادگی مدل محلی تا اجرای on_startup معلوم نیست؛ آن وضعیت همان‌جا لاگ می‌شود.
     log.info(
-        "🚀 ربات فعال شد | پاسخ سریع: همیشه | مدل محلی «%s»: %s | API «%s»: %s",
-        llm.MODEL_NAME, "فعال" if MODEL_READY else "غیرفعال",
+        "🚀 ربات فعال شد | پاسخ سریع: همیشه | API «%s»: %s",
         api_llm.model_label(), "فعال" if can_offer_api() else "غیرفعال (کلید نیست)",
     )
     log.info(

@@ -84,6 +84,32 @@ def _save_json(path: str, data: dict) -> None:
     os.replace(temporary, path)
 
 
+def _max_merge(base: dict, extra: dict) -> dict:
+    """ادغام شمارنده‌ها (روز → کاربر → نوع) طوری که بیشترین مقدار برنده باشد.
+
+    در تعارض نوشتن، داده‌ی محلی تازه‌تر از نسخه‌ی مرجع است؛ اگر مقدار مرجع
+    جای داده‌ی محلی را بگیرد، همان درخواستی که ذخیره را راه انداخته از دست
+    می‌رود و سهمیه کم شمرده می‌شود.
+    """
+    merged: dict = {}
+    for source in (base, extra):
+        for day, users in source.items():
+            if not isinstance(users, dict):
+                continue
+            target = merged.setdefault(day, {})
+            for user, counts in users.items():
+                if not isinstance(counts, dict):
+                    continue
+                current = target.setdefault(str(user), {})
+                for kind, value in counts.items():
+                    try:
+                        value = int(value)
+                    except (TypeError, ValueError):
+                        continue
+                    current[kind] = max(current.get(kind, 0), value)
+    return merged
+
+
 # ---------------------------------------------------------------- پشتیبان گیت‌هاب
 
 
@@ -139,8 +165,7 @@ class GitHubState:
             if response.status_code in (409, 422) and "sha" in body:
                 # کسی دیگر زودتر نوشته؛ دوباره بخوان و یک‌بار دیگر تلاش کن
                 fresh = self.load()
-                merged = {**fresh, **{k: v for k, v in data.items() if k not in fresh}}
-                return self._put(merged)
+                return self._put(_max_merge(fresh, data))
             response.raise_for_status()
             self.sha = (response.json().get("content") or {}).get("sha", self.sha)
             return True
