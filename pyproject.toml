@@ -1,0 +1,67 @@
+[project]
+name = "amoozesh-bot"
+version = "2.0.0"
+description = "AI-Powered Telegram Bot for University Course Selection & Professor Review (Persian)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "3punch" }]
+keywords = ["telegram", "bot", "persian", "university", "course-selection", "ollama"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Framework :: AsyncIO",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.0",
+    "mypy>=1.9",
+    "ruff>=0.6",
+    "bandit>=1.7",
+]
+docs = [
+    "mkdocs>=1.5",
+    "mkdocs-material>=9.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["amoozesh_bot*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "I", "B", "C4", "UP", "PIE", "PERF", "RUF", "S"]
+ignore = ["E501", "B008"]
+src = ["src"]
+
+[tool.ruff.isort]
+known-first-party = ["amoozesh_bot"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+strict_optional = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-v --cov=src --cov-report=term-missing --cov-report=html"
+
+[tool.black]
+line-length = 100
+target-version = ['py310']

@@ -1,0 +1,78 @@
+# ==============================================================================
+# Amoozesh-Bot — .gitignore حرفه‌ای
+# ==============================================================================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# State & data (حالت ربات و داده‌های runtime)
+.state/
+data/
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+mypy.ini
+.ruff_cache/
+
+# Docker
+.dockerignore
+
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Build artifacts
+*.exe
+*.o
+*.obj
+bin/
+obj/

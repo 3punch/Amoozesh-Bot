@@ -1,0 +1,25 @@
+# ==============================================================================
+# Amoozesh-Bot — وابستگی‌ها (نسخه‌های قفل شده برای بازتولیدپذیری)
+# ==============================================================================
+
+# core
+python-telegram-bot==21.4
+pandas==2.2.2
+openpyxl==3.1.2
+pypdf==4.2.0
+requests==2.31.0
+
+# professional tooling
+pydantic==2.7.3
+python-dotenv==1.0.1
+
+# optional: LLM/benchmark
+ollama==0.1.7
+
+# dev / CI (install via: pip install -e ".[dev]")
+# pytest==8.3.2
+# pytest-asyncio==0.23.7
+# pytest-cov==5.0.0
+# mypy==1.10.0
+# ruff==0.6.6
+# bandit==1.7.5
