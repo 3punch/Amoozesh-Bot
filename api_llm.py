@@ -27,10 +27,7 @@ import time
 import requests
 
 API_KEY = (
-    os.getenv("API_KEY")
-    or os.getenv("OPENROUTER_API_KEY")
-    or os.getenv("OPENAI_API_KEY")
-    or ""
+    os.getenv("API_KEY") or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
 ).strip()
 API_MODEL = os.getenv("API_MODEL", "qwen/qwen-2.5-72b-instruct").strip()
 API_BASE_URL = os.getenv("API_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
@@ -67,8 +64,13 @@ def _headers() -> dict:
     return headers
 
 
-def generate(messages: list[dict], *, max_tokens: int | None = None,
-             temperature: float = 0.2, timeout: int | None = None) -> str:
+def generate(
+    messages: list[dict],
+    *,
+    max_tokens: int | None = None,
+    temperature: float = 0.2,
+    timeout: int | None = None,
+) -> str:
     """یک پاسخ متنی از سرویس ابری می‌گیرد.
 
     خطاها به APIError تبدیل می‌شوند تا مسیر ربات یکسان بماند.
@@ -86,12 +88,11 @@ def generate(messages: list[dict], *, max_tokens: int | None = None,
     url = f"{API_BASE_URL}/chat/completions"
     started = time.time()
 
+    request_timeout = max(1, timeout or API_TIMEOUT)
     response = None
     for attempt in range(2):
         try:
-            response = requests.post(
-                url, json=payload, headers=_headers(), timeout=timeout or API_TIMEOUT
-            )
+            response = requests.post(url, json=payload, headers=_headers(), timeout=request_timeout)
         except requests.Timeout as exc:
             raise APIError("سرویس API در زمان مجاز پاسخ نداد.") from exc
         except requests.RequestException as exc:
@@ -102,7 +103,8 @@ def generate(messages: list[dict], *, max_tokens: int | None = None,
             continue
         break
 
-    assert response is not None
+    if response is None:  # Defensive guard: the request loop must produce a response.
+        raise APIError("سرویس API پاسخی برنگرداند.")
     if response.status_code == 401:
         raise APIError("کلید API پذیرفته نشد (۴۰۱).")
     if response.status_code == 402:

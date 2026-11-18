@@ -13,8 +13,9 @@ requests==2.31.0
 pydantic==2.7.3
 python-dotenv==1.0.1
 
-# optional: LLM/benchmark
-ollama==0.1.7
+# Ollama is accessed through its HTTP API in llm.py; do not install the legacy
+# ollama Python SDK here because its httpx<0.26 constraint conflicts with
+# python-telegram-bot's httpx~=0.27 requirement.
 
 # dev / CI (install via: pip install -e ".[dev]")
 # pytest==8.3.2

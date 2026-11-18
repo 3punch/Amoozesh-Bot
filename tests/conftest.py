@@ -26,5 +26,6 @@ def tmp_data_dir():
 @pytest.fixture
 def settings():
     """تنظیمات پیش‌فرض برای تست."""
-    from src.config import load_settings
+    from amoozesh_bot.config import load_settings
+
     return load_settings()

@@ -1,0 +1,20 @@
+# Keep build context small and never send local secrets or environments.
+.git
+.venv
+venv
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+htmlcov
+.coverage
+.state
+data
+.env
+.env.*
+!.env.example
+*.log
+result*.json
+bench-results.json
+tests
+scripts

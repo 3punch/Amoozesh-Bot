@@ -16,10 +16,12 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import fallback
 import llm
@@ -39,9 +41,16 @@ def slug(name: str) -> str:
 
 
 def pull(model: str) -> bool:
+    executable = shutil.which("ollama")
+    if executable is None:
+        print("❌ فرمان ollama در PATH پیدا نشد.", flush=True)
+        return False
+
     print(f"⬇️  دریافت {model} …", flush=True)
     started = time.time()
-    proc = subprocess.run(["ollama", "pull", model], capture_output=True, text=True)
+    proc = subprocess.run(  # noqa: S603 - fixed executable, argument list, no shell
+        [str(Path(executable).resolve()), "pull", model], capture_output=True, text=True
+    )
     if proc.returncode != 0:
         print(f"❌ دریافت {model} ناموفق: {proc.stderr[-300:]}", flush=True)
         return False
@@ -69,8 +78,9 @@ def ask(store: DataStore, question: str) -> dict:
 
     text = fallback.sanitize_model_text(raw, allow_verdict=bool(stats.get("verdict")))
     ok, why = fallback.verify_model_text(text, context)
-    row.update(raw=raw.strip(), text=text, verified=ok, reason=why,
-               facts=fallback.answer(store, question))
+    row.update(
+        raw=raw.strip(), text=text, verified=ok, reason=why, facts=fallback.answer(store, question)
+    )
     return row
 
 
@@ -110,8 +120,9 @@ def main() -> int:
             rows.append(row)
             dur = row.get("seconds")
             speed = (row.get("speed") or {}).get("tok_per_s")
-            status = ("✅ تأیید" if row.get("verified")
-                      else f"🚫 {row.get('reason') or row.get('error')}")
+            status = (
+                "✅ تأیید" if row.get("verified") else f"🚫 {row.get('reason') or row.get('error')}"
+            )
             print(f"   {dur}s | {speed} tok/s | {status}", flush=True)
         results[model] = rows
 
@@ -140,8 +151,10 @@ def main() -> int:
             emit(f"### {i}. {row['question']}")
             emit()
             speed = row.get("speed") or {}
-            emit(f"`{row.get('seconds')}s` · `{speed.get('tok_per_s')} tok/s` · "
-                 f"زمینه `{speed.get('prompt_eval_count')}` توکن")
+            emit(
+                f"`{row.get('seconds')}s` · `{speed.get('tok_per_s')} tok/s` · "
+                f"زمینه `{speed.get('prompt_eval_count')}` توکن"
+            )
             emit()
             if row.get("facts"):
                 emit("**پاسخ قطعی ربات:**")

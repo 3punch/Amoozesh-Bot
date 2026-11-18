@@ -1,17 +1,14 @@
-# ==============================================================================
-# Amoozesh-Bot — docker-compose.yml (اجرای یک‌کلک در هر محیط)
-# ==============================================================================
 services:
   ollama:
     image: ollama/ollama:latest
     container_name: amoozesh-ollama
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      test: ["CMD", "ollama", "list"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -25,11 +22,14 @@ services:
         condition: service_healthy
     env_file:
       - .env
+    environment:
+      DATA_DIR: /app
+      OLLAMA_HOST: http://ollama:11434
     volumes:
-      - ./data:/app/data
-      - ./.state:/app/.state
+      - bot_state:/app/.state
     restart: unless-stopped
-    command: python EntekhabVahedBot.py
+    command: ["python", "EntekhabVahedBot.py"]
 
 volumes:
   ollama_data:
+  bot_state:

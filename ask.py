@@ -27,10 +27,8 @@ def main() -> int:
     parser.add_argument("question", nargs="+", help="متن سوال")
     parser.add_argument("--context", action="store_true", help="فقط زمینه را نشان بده")
     parser.add_argument("--json", action="store_true", help="خروجی JSON")
-    parser.add_argument("--deep", action="store_true",
-                        help="حالت «تحلیل با مدل» (متن کامل نظرها)")
-    parser.add_argument("--api", action="store_true",
-                        help="تحلیل با سرویس ابری (نیازمند API_KEY)")
+    parser.add_argument("--deep", action="store_true", help="حالت «تحلیل با مدل» (متن کامل نظرها)")
+    parser.add_argument("--api", action="store_true", help="تحلیل با سرویس ابری (نیازمند API_KEY)")
     args = parser.parse_args()
 
     question = " ".join(args.question).strip()
@@ -75,12 +73,13 @@ def main() -> int:
 
         print(f"❓ سوال (حالت {provider}): {question}")
         print(f"👨‍🏫 استاد(های) پرسیده‌شده: {meta.get('professors') or '—'}")
-        print(f"📄 زمینه‌ی کامل: {meta.get('chars')} کاراکتر | "
-              f"درس‌ها: {meta.get('courses')}")
+        print(f"📄 زمینه‌ی کامل: {meta.get('chars')} کاراکتر | درس‌ها: {meta.get('courses')}")
         if result["speed"]:
             sp = result["speed"]
-            print(f"⏱️ {sp.get('duration_s')}s | {sp.get('eval_count')} توکن | "
-                  f"{sp.get('tok_per_s')} توکن/ثانیه | زمینه {sp.get('prompt_eval_count')} توکن")
+            print(
+                f"⏱️ {sp.get('duration_s')}s | {sp.get('eval_count')} توکن | "
+                f"{sp.get('tok_per_s')} توکن/ثانیه | زمینه {sp.get('prompt_eval_count')} توکن"
+            )
         if args.context:
             print("\n" + "=" * 60 + "\n📄 زمینه:\n" + "=" * 60)
             print(context)
@@ -103,7 +102,8 @@ def main() -> int:
         "question": question,
         "facts": fallback.answer(store, question),
         "stats": stats,
-        "prompt_tokens_estimate": estimate_tokens(messages[0]["content"]) + estimate_tokens(question),
+        "prompt_tokens_estimate": estimate_tokens(messages[0]["content"])
+        + estimate_tokens(question),
         "context": context,
         "answer": None,
         "error": None,
@@ -120,9 +120,7 @@ def main() -> int:
         else:
             try:
                 raw = llm.generate(messages)
-                text = fallback.sanitize_model_text(
-                    raw, allow_verdict=bool(stats.get("verdict"))
-                )
+                text = fallback.sanitize_model_text(raw, allow_verdict=bool(stats.get("verdict")))
                 ok, why = fallback.verify_model_text(text, context)
                 result["verified"] = ok
                 result["verify_reason"] = why
@@ -140,8 +138,10 @@ def main() -> int:
     print(f"❓ سوال: {question}")
     print(f"📊 کلیدواژه‌ها: {'، '.join(stats['keywords']) or '—'}")
     print(f"👨‍🏫 استاد(های) پیدا‌شده: {stats['professors'] or '—'}")
-    print(f"📚 ردیف‌های درس: {stats['courses']} | زمینه: {stats['chars']} کاراکتر "
-          f"(~{stats['tokens']} توکن) | کل پرامپت: ~{result['prompt_tokens_estimate']} توکن")
+    print(
+        f"📚 ردیف‌های درس: {stats['courses']} | زمینه: {stats['chars']} کاراکتر "
+        f"(~{stats['tokens']} توکن) | کل پرامپت: ~{result['prompt_tokens_estimate']} توکن"
+    )
     if stats.get("verdict"):
         print(f"⚖️ حکم قطعی: {stats['verdict']}")
     print("\n" + "=" * 60 + "\n📄 زمینه‌ی ارسالی به مدل:\n" + "=" * 60)
@@ -151,9 +151,11 @@ def main() -> int:
         print(result["facts"])
     if result["speed"]:
         sp = result["speed"]
-        print(f"\n⏱️ {sp.get('model')}: {sp.get('duration_s')}s | "
-              f"{sp.get('eval_count')} توکن تولید | {sp.get('tok_per_s')} توکن/ثانیه | "
-              f"زمینه {sp.get('prompt_eval_count')} توکن")
+        print(
+            f"\n⏱️ {sp.get('model')}: {sp.get('duration_s')}s | "
+            f"{sp.get('eval_count')} توکن تولید | {sp.get('tok_per_s')} توکن/ثانیه | "
+            f"زمینه {sp.get('prompt_eval_count')} توکن"
+        )
     if result["answer"]:
         print("\n" + "=" * 60 + f"\n🤖 جمع‌بندی {llm.MODEL_NAME} (تأییدشده):\n" + "=" * 60)
         print(result["answer"])
