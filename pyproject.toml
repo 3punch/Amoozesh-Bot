@@ -4,7 +4,7 @@ version = "2.0.0"
 description = "AI-Powered Telegram Bot for University Course Selection & Professor Review (Persian)"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "3punch" }]
 keywords = ["telegram", "bot", "persian", "university", "course-selection", "ollama"]
 classifiers = [
@@ -12,19 +12,28 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Framework :: AsyncIO",
+]
+dependencies = [
+    "python-telegram-bot==21.4",
+    "pandas==2.2.2",
+    "openpyxl==3.1.2",
+    "pypdf==4.2.0",
+    "requests==2.31.0",
+    "pydantic==2.7.3",
+    "python-dotenv==1.0.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23",
-    "pytest-cov>=4.0",
-    "mypy>=1.9",
-    "ruff>=0.6",
-    "bandit>=1.7",
+    "pytest>=8.0,<10",
+    "pytest-asyncio>=0.23,<2",
+    "pytest-cov>=4.0,<8",
+    "mypy>=1.9,<2",
+    "pandas-stubs>=2.2.2.240807,<3",
+    "ruff>=0.6,<1",
+    "bandit>=1.7,<2",
 ]
 docs = [
     "mkdocs>=1.5",
@@ -42,15 +51,23 @@ include = ["amoozesh_bot*"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-select = ["E", "F", "I", "B", "C4", "UP", "PIE", "PERF", "RUF", "S"]
-ignore = ["E501", "B008"]
 src = ["src"]
 
-[tool.ruff.isort]
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "C4", "UP", "PIE", "PERF", "RUF", "S"]
+# Persian and Arabic letters are deliberately used in user-facing strings and data.
+ignore = ["E501", "B008", "RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S105"]
+"scripts/verify_imports.py" = ["PERF203"]
+
+[tool.ruff.lint.isort]
 known-first-party = ["amoozesh_bot"]
 
 [tool.mypy]
-python_version = "3.10"
+# Use the active interpreter's version so dependency stubs match each CI environment.
+# Compatibility with Python 3.10 is checked by the 3.10 matrix job and Ruff's target.
 warn_return_any = true
 warn_unused_ignores = true
 disallow_untyped_defs = true
@@ -59,8 +76,9 @@ strict_optional = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-addopts = "-v --cov=src --cov-report=term-missing --cov-report=html"
+addopts = "-v --cov=amoozesh_bot --cov-report=term-missing --cov-report=html"
 
 [tool.black]
 line-length = 100

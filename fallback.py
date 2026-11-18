@@ -23,7 +23,6 @@ import re
 
 from retrieval import (
     OPINION_MARKERS,
-    QUESTION_MARKERS,
     normalize,
     prioritize_comments,
 )
@@ -41,9 +40,28 @@ FORM_ITEM = {
 
 # برچسب فیلدها در فرم‌های استادشناسی یکدست نیست؛ با «توقف روی فیلد بعدی» می‌خوانیم
 FIELD_STOPS = (
-    "منابع", "وضعیت نمره", "ارزیابی", "توضیح", "راه ارتباطی", "راه های ارتباطی",
-    "ترمی که", "چه ترمی", "اهمیت حضور", "نام دروس", "گروه درسی",
-    "☆", "📚", "📖", "📝", "✅", "⭐", "📄", "📲", "♻️", "⚠️", "🎓",
+    "منابع",
+    "وضعیت نمره",
+    "ارزیابی",
+    "توضیح",
+    "راه ارتباطی",
+    "راه های ارتباطی",
+    "ترمی که",
+    "چه ترمی",
+    "اهمیت حضور",
+    "نام دروس",
+    "گروه درسی",
+    "☆",
+    "📚",
+    "📖",
+    "📝",
+    "✅",
+    "⭐",
+    "📄",
+    "📲",
+    "♻️",
+    "⚠️",
+    "🎓",
 )
 SEPARATORS = " \t:؛،.؟┘●┅┄☆⁉️📚📖📝✅⭐📄📲♻️⚠️🖐💠🏫🎓"
 
@@ -55,7 +73,7 @@ def _field(form: str | None, start_re: str, limit: int = 90) -> str:
     match = re.search(start_re, form)
     if not match:
         return ""
-    rest = form[match.end():]
+    rest = form[match.end() :]
     # «پاسخ :» و جداکننده‌های تزئینی پیش از مقدار واقعی می‌آیند
     for _ in range(3):
         rest = re.sub(rf"^[{SEPARATORS}]+", "", rest)
@@ -65,7 +83,7 @@ def _field(form: str | None, start_re: str, limit: int = 90) -> str:
         index = rest.find(stop)
         if 0 <= index < cut:
             cut = index
-    value = rest[:min(cut, limit)]
+    value = rest[: min(cut, limit)]
     value = re.sub(rf"^[{SEPARATORS}]+", "", value)
     return re.sub(r"\s+", " ", value).strip(" :،؛-")
 
@@ -107,10 +125,7 @@ def format_schedule(raw) -> str:
     text = _cell(raw)
     if not text:
         return ""
-    text = (
-        text.replace("ي", "ی").replace("ك", "ک").replace("\u200c", " ")
-        .translate(TO_ASCII)
-    )
+    text = text.replace("ي", "ی").replace("ك", "ک").replace("\u200c", " ").translate(TO_ASCII)
     text = re.sub(r"\s+", " ", text)
     days: list[str] = []
     slots: dict[str, list[str]] = {}
@@ -172,7 +187,9 @@ def _is_question(text: str) -> bool:
     if any(word in norm for word in QUESTION_WORDS):
         return True
     # پرسش‌های محاوره‌ای که ممکن است با واژه‌ی مثبت (مثل «ارزش داره») اشتباه شوند.
-    if re.search(r"\b(?:ارزش داره|کسی میدونه|کسی می دونه|میشه|می شه|چند میدن|چند میدن|کیه|کجاست)\b", norm):
+    if re.search(
+        r"\b(?:ارزش داره|کسی میدونه|کسی می دونه|میشه|می شه|چند میدن|چند میدن|کیه|کجاست)\b", norm
+    ):
         return True
     if any(mark in text for mark in ("؟", "?")):
         return True
@@ -286,13 +303,10 @@ def _theme_polarity(entries: list[tuple[str, int]]) -> dict[str, tuple[int, int]
 
 def _polarity(comments: list[str]) -> dict[str, tuple[int, int]]:
     """نسخه‌ی ساده (بدون نسبت‌دادن به استاد) — برای سازگاری."""
-    return _theme_polarity(
-        [(c, _sentiment(c)) for c in comments if not _is_question(c)]
-    )
+    return _theme_polarity([(c, _sentiment(c)) for c in comments if not _is_question(c)])
 
 
-def _verdict(scores: dict[str, int], positive: int, negative: int,
-             evidence: int) -> str:
+def _verdict(scores: dict[str, int], positive: int, negative: int, evidence: int) -> str:
     """حکم کوتاه و قابل‌عمل از داده‌ی موجود."""
     if scores:
         average = sum(scores.values()) / len(scores)
@@ -372,14 +386,12 @@ def _name_keys(store) -> dict[str, str]:
         if not tokens:
             continue
         surname.setdefault(tokens[-1], []).append(professor.name)
-    return {key: names[0] for key, names in surname.items()
-            if len(names) == 1 and len(key) >= 3}
+    return {key: names[0] for key, names in surname.items() if len(names) == 1 and len(key) >= 3}
 
 
 def _mentions(norm: str, key: str) -> int:
     """جای نام خانوادگی در متن (با پسوندهای چسبیده مثل «غلامیانه»)، یا -۱."""
-    match = re.search(rf"(?<!\w){re.escape(key)}(?:م|ت|ش|ها|های|ه|ی|و|رو|هم|ست)?(?!\w)",
-                      norm)
+    match = re.search(rf"(?<!\w){re.escape(key)}(?:م|ت|ش|ها|های|ه|ی|و|رو|هم|ست)?(?!\w)", norm)
     return match.start() if match else -1
 
 
@@ -395,11 +407,7 @@ def _attributed(comment: str, keys: dict[str, str], default: str) -> dict[str, i
         if not clause.strip():
             continue
         norm = normalize(clause)
-        found = sorted(
-            (pos, keys[token])
-            for token in keys
-            if (pos := _mentions(norm, token)) >= 0
-        )
+        found = sorted((pos, keys[token]) for token in keys if (pos := _mentions(norm, token)) >= 0)
         owners = [name for _, name in found]
         target = owners[0] if owners else current
         current = target
@@ -409,8 +417,9 @@ def _attributed(comment: str, keys: dict[str, str], default: str) -> dict[str, i
     return scores
 
 
-def _strengths_warnings(form: str | None,
-                        polarity: dict[str, tuple[int, int]]) -> tuple[list[str], list[str]]:
+def _strengths_warnings(
+    form: str | None, polarity: dict[str, tuple[int, int]]
+) -> tuple[list[str], list[str]]:
     """نقاط قوت و هشدارهای یک استاد از فرم استادشناسی + هم‌جهتی نظرات."""
     strengths: list[str] = []
     warnings: list[str] = []
@@ -475,9 +484,7 @@ def _quality_index(scores: dict[str, int], positive: int, negative: int) -> floa
 
 def professor_profile(store, name: str) -> dict | None:
     """همه‌ی چیزهایی که از داده درباره‌ی یک استاد می‌دانیم، در یک ساختار."""
-    professor = next(
-        (p for p in store.professors if p.norm_name == normalize(name)), None
-    )
+    professor = next((p for p in store.professors if p.norm_name == normalize(name)), None)
     if professor is None:
         return None
 
@@ -516,8 +523,9 @@ def professor_profile(store, name: str) -> dict | None:
     }
 
 
-def _sample_opinions(comments: list[str], limit: int = 2,
-                     professor_name: str = "", store=None) -> list[str]:
+def _sample_opinions(
+    comments: list[str], limit: int = 2, professor_name: str = "", store=None
+) -> list[str]:
     """چند تجربه‌ی واقعی و مرتبط را عیناً نشان بده؛ پرسش و داده‌ی شخصی حذف می‌شود."""
     selected: list[str] = []
     seen: set[str] = set()
@@ -556,7 +564,9 @@ def professor_courses_answer(store, name: str, course: str = "") -> str:
     rows = courses_for_professor(store, name, limit=6, course_norm=course)
     if not rows:
         return f"📚 برای «{name}» ارائه‌ای در جدول این ترم پیدا نکردم."
-    title = f"📚 ارائه‌های «{name}» در «{_cell(course)}»" if course else f"📚 کلاس‌های این ترم «{name}»"
+    title = (
+        f"📚 ارائه‌های «{name}» در «{_cell(course)}»" if course else f"📚 کلاس‌های این ترم «{name}»"
+    )
     return "\n".join([title, *rows])
 
 
@@ -569,12 +579,14 @@ def professor_answer(store, name: str, course: str = "", query: str = "") -> str
     lines = [f"👤 {profile['name']} · بر پایه‌ی {_fa(profile['comments'])} پیام آرشیو"]
     source = next(p for p in store.professors if p.norm_name == normalize(name))
     nq = normalize(query)
-    asks_schedule = bool(re.search(
-        r"چه\s*زمانی|زمان|ساعت|کی\s*(?:ارائه|کلاس)|کلاس(?:ها|های|\s*ها)?\s*(?:کی|چه\s*زمانی|چه\s*ساعتی)|ارائه\s*(?:کی|چه\s*زمانی)",
-        nq,
-    ))
-    opinions = [] if asks_schedule else _sample_opinions(
-        source.comments, professor_name=name, store=store
+    asks_schedule = bool(
+        re.search(
+            r"چه\s*زمانی|زمان|ساعت|کی\s*(?:ارائه|کلاس)|کلاس(?:ها|های|\s*ها)?\s*(?:کی|چه\s*زمانی|چه\s*ساعتی)|ارائه\s*(?:کی|چه\s*زمانی)",
+            nq,
+        )
+    )
+    opinions = (
+        [] if asks_schedule else _sample_opinions(source.comments, professor_name=name, store=store)
     )
     if opinions:
         lines.append("💬 نظرهای واقعی دانشجوها (عین متن؛ تجربه‌ها ممکن است متفاوت باشد):")
@@ -587,8 +599,7 @@ def professor_answer(store, name: str, course: str = "", query: str = "") -> str
         lines.append(f"📊 ارزیابی دانشجویان: {_fa(f'{average:.1f}')} از ۱۰")
         lines.append("   " + " · ".join(f"{k} {_fa(v)}" for k, v in scores.items()))
     elif profile["positive"] or profile["negative"]:
-        lines.append(f"🗣 نظرها: {_fa(profile['positive'])} مثبت · "
-                     f"{_fa(profile['negative'])} منفی")
+        lines.append(f"🗣 نظرها: {_fa(profile['positive'])} مثبت · {_fa(profile['negative'])} منفی")
 
     notes: list[str] = []
     touched = profile["positive"] + profile["negative"]
@@ -596,8 +607,9 @@ def professor_answer(store, name: str, course: str = "", query: str = "") -> str
         if touched < 4:
             notes.append("نظرهای ثبت‌شده برای این استاد کم است؛ ارزیابی قطعی نیست.")
         else:
-            notes.append("نظرها پراکنده است و جمع‌بندی روشن نمی‌دهد؛ "
-                         "برای تصمیم بهتر نام درس را هم بپرس.")
+            notes.append(
+                "نظرها پراکنده است و جمع‌بندی روشن نمی‌دهد؛ برای تصمیم بهتر نام درس را هم بپرس."
+            )
     if not scores and not profile["evidence"]:
         notes.append("در آرشیو ارزیابی روشنی درباره‌ی این استاد ثبت نشده است.")
 
@@ -616,8 +628,9 @@ def professor_answer(store, name: str, course: str = "", query: str = "") -> str
     courses = courses_for_professor(store, profile["name"], course_norm=course)
     if courses:
         lines.append("")
-        lines.append(f"📚 ارائه‌های این استاد در «{_cell(course)}»" if course
-                     else "📚 ارائه‌ی این ترم")
+        lines.append(
+            f"📚 ارائه‌های این استاد در «{_cell(course)}»" if course else "📚 ارائه‌ی این ترم"
+        )
         lines.extend(courses)
 
     return "\n".join(lines)
@@ -631,8 +644,9 @@ def _surname(name: str) -> str:
     return tokens[-1] if tokens else ""
 
 
-def _comparative_votes(store, names: list[str], extra_comments: list[str] | None = None
-                       ) -> tuple[dict[str, int], int]:
+def _comparative_votes(
+    store, names: list[str], extra_comments: list[str] | None = None
+) -> tuple[dict[str, int], int]:
     """رأی‌های مستقیم «کدام بهتر است» از پیام‌هایی که هر دو استاد را نام می‌برند.
 
     خروجی: (امتیاز هر استاد، تعداد مقایسه‌های صریح). جمله‌های پرسشی («X بهتره یا Y؟»)
@@ -640,15 +654,13 @@ def _comparative_votes(store, names: list[str], extra_comments: list[str] | None
     """
     names = [n for n in names if _surname(n)]
     if len(names) < 2:
-        return {n: 0 for n in names}, 0
+        return dict.fromkeys(names, 0), 0
 
     pattern = "|".join(re.escape(_surname(n)) for n in names)
     better_then = re.compile(rf"({pattern})\s*(?:هم|خیلی|یکم|کمی|واقعا|که|اصلا)?\s*{BETTER}")
     better_from = re.compile(rf"{BETTER}\s*(?:از|نسبت\s*به)\s*({pattern})")
     worse_from = re.compile(rf"از\s*({pattern})\s*بدتر")
-    better_than_named = re.compile(
-        rf"(?:در\s*مقابل|نسبت\s*به|از)\s*({pattern})[^.؟?]*?{BETTER}"
-    )
+    better_than_named = re.compile(rf"(?:در\s*مقابل|نسبت\s*به|از)\s*({pattern})[^.؟?]*?{BETTER}")
 
     def resolve(token_text: str) -> str | None:
         for name in names:
@@ -656,7 +668,7 @@ def _comparative_votes(store, names: list[str], extra_comments: list[str] | None
                 return name
         return None
 
-    votes = {name: 0 for name in names}
+    votes = dict.fromkeys(names, 0)
     comparisons = 0
     comments: list[str] = list(extra_comments or [])
     for name in names:
@@ -723,41 +735,53 @@ def compare_answer(store, names: list[str]) -> str | None:
     top_name, top_vote = order[0]
     spread = top_vote - order[-1][1]
     if comparisons and spread >= 1:
-        lines.append(f"🎯 نتیجه: نظرهای آرشیو به «{top_name}» متمایل‌تر است؛ "
-                     f"{_fa(comparisons)} مقایسه‌ی مستقیم ثبت شده و نتیجه به سود "
-                     "اوست.")
+        lines.append(
+            f"🎯 نتیجه: نظرهای آرشیو به «{top_name}» متمایل‌تر است؛ "
+            f"{_fa(comparisons)} مقایسه‌ی مستقیم ثبت شده و نتیجه به سود "
+            "اوست."
+        )
     else:
         # ۲) وگرنه شاخص کیفیت (امتیاز فرم یا نسبت نظرها)
-        ranked = sorted((p for p in profiles if p["index"] is not None),
-                        key=lambda p: p["index"], reverse=True)
+        ranked = sorted(
+            (p for p in profiles if p["index"] is not None), key=lambda p: p["index"], reverse=True
+        )
         empty = [p["name"] for p in profiles if p["index"] is None]
         if not ranked:
             lines.append("🎯 نتیجه: داده‌ی کافی برای مقایسه‌ی این اساتید در آرشیو نیست.")
         elif len(ranked) == 1:
             only = ranked[0]
-            lines.append(f"🎯 نتیجه: در آرشیو فقط برای «{only['name']}» نظر ثبت شده "
-                         f"({_fa(only['positive'])} مثبت · {_fa(only['negative'])} منفی) "
-                         f"و برای {'، '.join('«' + n + '»' for n in empty)} ارزیابی "
-                         "روشنی نیست؛ تصمیم با خودت، اما داده درباره‌ی اولی حرف می‌زند.")
+            lines.append(
+                f"🎯 نتیجه: در آرشیو فقط برای «{only['name']}» نظر ثبت شده "
+                f"({_fa(only['positive'])} مثبت · {_fa(only['negative'])} منفی) "
+                f"و برای {'، '.join('«' + n + '»' for n in empty)} ارزیابی "
+                "روشنی نیست؛ تصمیم با خودت، اما داده درباره‌ی اولی حرف می‌زند."
+            )
         elif ranked[0]["index"] >= 8 and ranked[1]["index"] >= 8:
-            lines.append("🎯 نتیجه: ارزیابی هر دو خوب است؛ تفاوت معناداری بین آن‌ها "
-                         "در آرشیو دیده نمی‌شود و انتخاب به ساعت کلاس بستگی دارد.")
+            lines.append(
+                "🎯 نتیجه: ارزیابی هر دو خوب است؛ تفاوت معناداری بین آن‌ها "
+                "در آرشیو دیده نمی‌شود و انتخاب به ساعت کلاس بستگی دارد."
+            )
         elif ranked[0]["index"] - ranked[1]["index"] >= 0.5:
             best = ranked[0]
             if best["index"] < 4.5:
-                lines.append(f"🎯 نتیجه: هیچ‌کدام ارزیابی مثبتی ندارند، ولی "
-                             f"«{best['name']}» کم‌ریسک‌تر است.")
+                lines.append(
+                    f"🎯 نتیجه: هیچ‌کدام ارزیابی مثبتی ندارند، ولی «{best['name']}» کم‌ریسک‌تر است."
+                )
             else:
                 lines.append(f"🎯 نتیجه: «{best['name']}» انتخاب کم‌ریسک‌تری است.")
         else:
-            lines.append("🎯 نتیجه: تفاوت معناداری بین این اساتید در آرشیو دیده "
-                         "نمی‌شود؛ بر اساس ساعت کلاس و درس تصمیم بگیر.")
+            lines.append(
+                "🎯 نتیجه: تفاوت معناداری بین این اساتید در آرشیو دیده "
+                "نمی‌شود؛ بر اساس ساعت کلاس و درس تصمیم بگیر."
+            )
 
     lines.append("")
     for profile in profiles:
-        marks = [f"{_fa(profile['comments'])} پیام",
-                 f"{_fa(profile['positive'])} نظر مثبت",
-                 f"{_fa(profile['negative'])} نظر منفی"]
+        marks = [
+            f"{_fa(profile['comments'])} پیام",
+            f"{_fa(profile['positive'])} نظر مثبت",
+            f"{_fa(profile['negative'])} نظر منفی",
+        ]
         if profile["scores"]:
             average = sum(profile["scores"].values()) / len(profile["scores"])
             marks.insert(0, f"فرم: {_fa(f'{average:.1f}')} از ۱۰")
@@ -768,12 +792,16 @@ def compare_answer(store, names: list[str]) -> str | None:
             lines.append(f"   ⚠️ {profile['warnings'][0]}")
         if not (profile["strengths"] or profile["warnings"]):
             lines.append(f"   ℹ️ {profile['verdict']}")
-        source = next((p for p in store.professors
-                       if p.norm_name == normalize(profile["name"])), None)
+        source = next(
+            (p for p in store.professors if p.norm_name == normalize(profile["name"])), None
+        )
         if source:
-            for opinion in _sample_opinions(
-                    source.comments, limit=1, professor_name=profile["name"], store=store):
-                lines.append(f"   💬 “{opinion}”")
+            lines.extend(
+                f"   💬 “{opinion}”"
+                for opinion in _sample_opinions(
+                    source.comments, limit=1, professor_name=profile["name"], store=store
+                )
+            )
 
     if comparisons:
         parts = []
@@ -797,13 +825,14 @@ def compare_answer(store, names: list[str]) -> str | None:
         lines.append("• برای این اساتید در جدول این ترم درسی ثبت نشده است.")
 
     lines.append("")
-    lines.append("ℹ️ این مقایسه از فرم‌ها و نظرهای آرشیو ساخته شده؛ اگر یکی از این‌ها "
-                 "را برای درس مشخصی می‌خواهی، نام درس را هم بگو.")
+    lines.append(
+        "ℹ️ این مقایسه از فرم‌ها و نظرهای آرشیو ساخته شده؛ اگر یکی از این‌ها "
+        "را برای درس مشخصی می‌خواهی، نام درس را هم بگو."
+    )
     return "\n".join(lines)
 
 
-def courses_for_professor(store, name: str, limit: int = 6,
-                          course_norm: str = "") -> list[str]:
+def courses_for_professor(store, name: str, limit: int = 6, course_norm: str = "") -> list[str]:
     """درس‌های این ترم یک استاد؛ با course_norm فقط همان درس."""
     if store.courses is None:
         return []
@@ -811,8 +840,9 @@ def courses_for_professor(store, name: str, limit: int = 6,
     matches = []
     for _, row in store.courses.iterrows():
         professor = normalize(_cell(row.get("استاد")))
-        if not (professor == target or
-                (professor and (target in professor or professor in target))):
+        if not (
+            professor == target or (professor and (target in professor or professor in target))
+        ):
             continue
         if course_norm:
             row_course = normalize(_cell(row.get("نام درس")))
@@ -837,8 +867,10 @@ def courses_for_professor(store, name: str, limit: int = 6,
 def eligibility_answer(store, info: dict) -> str:
     """نتیجه‌ی قطعی مجاز بودن یک درس برای یک ورودی."""
     verdict = "مجاز است ✅" if info["allowed"] else "مجاز نیست ❌"
-    lines = [f"🎯 نتیجه: «{info['course']}» برای ورودی {_fa(info['year'])} {verdict}",
-             info["reason"]]
+    lines = [
+        f"🎯 نتیجه: «{info['course']}» برای ورودی {_fa(info['year'])} {verdict}",
+        info["reason"],
+    ]
 
     allowed_rows = info.get("allowed_rows") or []
     blocked_rows = info.get("blocked_rows") or []
@@ -905,9 +937,11 @@ def not_found_answer(store, query: str) -> str:
     tried = _fa(re.sub(r"\s+", " ", query.strip()))[:60]
     lines = [f"🎯 نتیجه: در داده‌ی این ترم چیزی برای «{tried}» پیدا نکردم."]
     if store.courses is not None and len(store.courses):
-        lines.append(f"ℹ️ داده‌ی فعلی شامل {_fa(len(store.courses))} ردیف ارائه‌ی درس "
-                     f"و {_fa(len(store.professors))} شناسنامه‌ی استاد است؛ شاید نام "
-                     "درس یا استاد کمی متفاوت نوشته شده باشد.")
+        lines.append(
+            f"ℹ️ داده‌ی فعلی شامل {_fa(len(store.courses))} ردیف ارائه‌ی درس "
+            f"و {_fa(len(store.professors))} شناسنامه‌ی استاد است؛ شاید نام "
+            "درس یا استاد کمی متفاوت نوشته شده باشد."
+        )
     lines.append("")
     lines.append("می‌توانی این‌طور بپرسی:")
     lines.append("• استاد آذر ابوالقاسمی چطور است؟")
@@ -922,8 +956,7 @@ def ambiguous_name_answer(professors: list, tokens: list[str]) -> str:
     lines = [f"❓ {title} بین چند استاد مشترک است؛ کدام یکی را می‌پرسی؟"]
     lines.extend(f"• {professor.name}" for professor in professors[:6])
     lines.append("")
-    lines.append("برای پاسخ دقیق، نام خانوادگی استاد را هم بنویس "
-                 "(مثلاً «استاد همامی چطوره؟»).")
+    lines.append("برای پاسخ دقیق، نام خانوادگی استاد را هم بنویس (مثلاً «استاد همامی چطوره؟»).")
     return "\n".join(lines)
 
 
@@ -968,13 +1001,13 @@ def answer(store, query: str, want_model: bool = True) -> str | None:
             need = min(len(tokens), max(1, len(tokens) - 1))
             if overlap >= need and overlap > best_overlap:
                 course_norm, best_overlap = candidate, overlap
-        asks_classes = bool(re.search(
-            r"(?:کلاس(?:ها|های)?|ارائه(?:ها|های)?) .*?(?:کدوما|کدام|چه درس|چیا|کی|ساعت|زمان|این ترم)",
-            nquery,
-        ))
-        asks_schedule = bool(re.search(
-            r"چه\s*زمانی|زمان|ساعت|کی\s*(?:ارائه|کلاس)", nquery
-        ))
+        asks_classes = bool(
+            re.search(
+                r"(?:کلاس(?:ها|های)?|ارائه(?:ها|های)?) .*?(?:کدوما|کدام|چه درس|چیا|کی|ساعت|زمان|این ترم)",
+                nquery,
+            )
+        )
+        asks_schedule = bool(re.search(r"چه\s*زمانی|زمان|ساعت|کی\s*(?:ارائه|کلاس)", nquery))
         if asks_classes or asks_schedule:
             return professor_courses_answer(store, named[0], course=course_norm)
         text = professor_answer(store, named[0], course=course_norm, query=query)
@@ -1004,8 +1037,7 @@ def _plain(line: str) -> str:
     return line.strip()
 
 
-def sanitize_model_text(text: str, allow_verdict: bool = False,
-                       limit: int = 900) -> str:
+def sanitize_model_text(text: str, allow_verdict: bool = False, limit: int = 900) -> str:
     """خطوط پرخطر مدل را حذف می‌کند (حکم بی‌ربط، مارک‌داون، پرحرفی)."""
     if not text:
         return ""

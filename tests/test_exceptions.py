@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.exceptions import (
+from amoozesh_bot.exceptions import (
     AmoozeshBotError,
     ConfigurationError,
     DataValidationError,
@@ -17,6 +17,18 @@ def test_base_error_code():
     err = AmoozeshBotError("something", code="TEST")
     assert err.message == "something"
     assert err.code == "TEST"
+
+
+def test_typed_error_payloads():
+    configuration = ConfigurationError("bad config")
+    data = DataValidationError("bad data", source="courses.xlsx")
+    llm = LLMError("offline", provider="local")
+    retrieval = RetrievalError("not found", query="question")
+
+    assert configuration.code == "CONFIG_ERROR"
+    assert data.code == "DATA_VALIDATION_ERROR" and data.source == "courses.xlsx"
+    assert llm.code == "LLM_ERROR" and llm.provider == "local"
+    assert retrieval.code == "RETRIEVAL_ERROR" and retrieval.query == "question"
 
 
 def test_quota_exceeded_fields():

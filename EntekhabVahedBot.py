@@ -22,6 +22,13 @@ import sys
 import threading
 import time
 
+import api_llm
+import deep
+import fallback
+import llm
+import quota
+from prompts import FALLBACK_MESSAGE, GREETING, build_messages
+from retrieval import DataStore
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.error import BadRequest, TelegramError
@@ -33,14 +40,6 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-
-import api_llm
-import deep
-import fallback
-import llm
-import quota
-from prompts import FALLBACK_MESSAGE, GREETING, build_messages
-from retrieval import DataStore
 
 # خروجی UTF-8 بدون از دست رفتن بافر (مهم در ویندوز و لاگ‌های Actions)
 try:
@@ -63,8 +62,8 @@ MODEL_READY = False
 
 DEEP_BUTTON = "🧠 تحلیل مدل"
 API_BUTTON = "⚡ تحلیل با API"
-PENDING_TTL = 30 * 60          # دکمه‌ی هر پاسخ نیم ساعت معتبر است
-PENDING_MAX = 400              # سقف دکمه‌های فعال (جلوگیری از رشد حافظه)
+PENDING_TTL = 30 * 60  # دکمه‌ی هر پاسخ نیم ساعت معتبر است
+PENDING_MAX = 400  # سقف دکمه‌های فعال (جلوگیری از رشد حافظه)
 PENDING: dict[str, dict] = {}  # توکن کوتاه ⇒ {query, user, ts}
 
 
@@ -81,19 +80,25 @@ def remember_query(query: str, user_id: int | None = None) -> str:
     return token
 
 
-def recall_query(token: str) -> dict | None:
-    """توکن دکمه را یک‌بار مصرف می‌کند (ضربه‌ی دوم «منقضی» می‌گیرد)."""
-    entry = PENDING.pop(token, None)
+def recall_query(token: str, user_id: int | None = None) -> dict | None:
+    """توکن را فقط برای مالک پرسش یک‌بار مصرف می‌کند.
+
+    کلیک‌کننده‌ی دیگری نباید بتواند سهمیه‌ی خودش را با دکمه‌ی کاربر دیگر
+    مصرف کند؛ تلاش نامعتبر، توکن معتبر مالک را هم نمی‌سوزاند.
+    """
+    entry = PENDING.get(token)
     if entry is None:
         return None
     if time.time() - entry["ts"] > PENDING_TTL:
+        PENDING.pop(token, None)
         return None
-    return entry
+    owner_id = entry.get("user")
+    if owner_id is not None and owner_id != user_id:
+        return None
+    return PENDING.pop(token)
 
 
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("amoozeshbot")
 
@@ -252,8 +257,7 @@ def data_verdict(facts: str) -> str:
     return ""
 
 
-def compose_deep_text(store, query: str, result: dict,
-                      user_id=None) -> str:
+def compose_deep_text(store, query: str, result: dict, user_id=None) -> str:
     """متن نهایی پیام حالت مدل: تحلیل مدل یا شفاف‌سازی شکست + پاسخ قطعی."""
     facts = fallback.answer(store, query) or ""
     summary = base_summary(store, query)
@@ -310,16 +314,27 @@ async def run_deep(store, query: str, provider: str = "local", user_id=None) -> 
     if user_id is not None and not QUOTA.consume(user_id, kind):
         return quota_exhausted_text(user_id, kind)
 
-    result = await asyncio.to_thread(_analyze_serialized, store, query, provider)
+    try:
+        result = await asyncio.to_thread(_analyze_serialized, store, query, provider)
+    except Exception:
+        if user_id is not None:
+            QUOTA.refund(user_id, kind)
+        log.exception("تحلیل %s برای کاربر %s با خطای زیرساخت متوقف شد.", kind, user_id)
+        return "⚠️ سرویس تحلیل موقتاً در دسترس نیست؛ سهمیه‌ی این درخواست برگردانده شد. کمی بعد دوباره تلاش کن."
+
     if result.get("model_failed") and user_id is not None:
         QUOTA.refund(user_id, kind)
-        log.info("سهمیه‌ی %s برای کاربر %s برگشت داده شد (خطای زیرساخت).",
-                 kind, user_id)
+        log.info("سهمیه‌ی %s برای کاربر %s برگشت داده شد (خطای زیرساخت).", kind, user_id)
 
     log.info(
         "حالت %s: %s | ok=%s | دلیل=%s | %.1f ثانیه | زمینه %s کاراکتر | کاربر %s",
-        provider, query[:50], result.get("ok"), result.get("reason"),
-        result.get("elapsed", 0), result.get("meta", {}).get("chars"), user_id,
+        provider,
+        query[:50],
+        result.get("ok"),
+        result.get("reason"),
+        result.get("elapsed", 0),
+        result.get("meta", {}).get("chars"),
+        user_id,
     )
     return compose_deep_text(store, query, result, user_id=user_id)
 
@@ -344,10 +359,7 @@ PROGRESS_TEXT = {
         "این کار روی CPU بین ۳ تا ۶ دقیقه طول می‌کشد. لازم نیست کاری کنی؛ "
         "نتیجه همین‌جا جایگزین می‌شود."
     ),
-    "api": (
-        "⚡ در حال تحلیل با API «{model}»…\n"
-        "معمولاً کمتر از ۳۰ ثانیه طول می‌کشد."
-    ),
+    "api": ("⚡ در حال تحلیل با API «{model}»…\nمعمولاً کمتر از ۳۰ ثانیه طول می‌کشد."),
 }
 
 
@@ -360,10 +372,11 @@ async def _on_deep_button(update: Update, kind: str) -> None:
 
     user_id = getattr(getattr(callback, "from_user", None), "id", None)
     token = (callback.data or "").split(":", 1)[-1]
-    entry = recall_query(token)
+    entry = recall_query(token, user_id)
     if entry is None:
         await _edit_or_split(
-            callback, "⌛️ این دکمه منقضی شده است؛ لطفاً پرسش را دوباره بفرست."
+            callback,
+            "⌛️ این دکمه منقضی شده یا برای کاربر دیگری است؛ لطفاً پرسش را دوباره بفرست.",
         )
         return
 
@@ -371,9 +384,7 @@ async def _on_deep_button(update: Update, kind: str) -> None:
         await _edit_or_split(callback, quota_exhausted_text(user_id, kind))
         return
 
-    await _edit_or_split(
-        callback, PROGRESS_TEXT[kind].format(model=deep.provider_label(kind))
-    )
+    await _edit_or_split(callback, PROGRESS_TEXT[kind].format(model=deep.provider_label(kind)))
     text = await run_deep(STORE, entry["query"], provider=kind, user_id=user_id)
     await _edit_or_split(callback, text)
 
@@ -388,8 +399,7 @@ async def api_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await _on_deep_button(update, "api")
 
 
-async def _deep_command(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                        kind: str) -> None:
+async def _deep_command(update: Update, context: ContextTypes.DEFAULT_TYPE, kind: str) -> None:
     if not update.message:
         return
     if not is_addressed_to_bot(update, context):
@@ -406,15 +416,15 @@ async def _deep_command(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     if kind == "api" and not can_offer_api():
         facts = fallback.answer(STORE, question) or ""
-        note = ("⚠️ حالت API تنظیم نشده است (کلید API در Secrets نیست)."
-                "\nپاسخ فوری از داده:\n\n")
+        note = "⚠️ حالت API تنظیم نشده است (کلید API در Secrets نیست).\nپاسخ فوری از داده:\n\n"
         await send_long(update.message, note + (facts or GREETING))
         return
 
     if kind == "deep" and not MODEL_READY:
         facts = fallback.answer(STORE, question) or ""
-        note = ("⚠️ حالت مدل روی این اجرا فعال نیست (Ollama/مدل در دسترس نیست)."
-                "\nپاسخ فوری از داده:\n\n")
+        note = (
+            "⚠️ حالت مدل روی این اجرا فعال نیست (Ollama/مدل در دسترس نیست).\nپاسخ فوری از داده:\n\n"
+        )
         await send_long(update.message, note + (facts or GREETING))
         return
 
@@ -466,8 +476,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context_text, stats = STORE.build_context(user_text)
     log.info(
         "سوال: %s | کلیدواژه‌ها: %s | زمینه: %s کاراکتر (~%s توکن) | استادها: %s | درس‌ها: %s",
-        user_text[:60], stats["keywords"], stats["chars"], stats["tokens"],
-        stats["professors"], stats["courses"],
+        user_text[:60],
+        stats["keywords"],
+        stats["chars"],
+        stats["tokens"],
+        stats["professors"],
+        stats["courses"],
     )
 
     facts = fallback.answer(STORE, user_text)
@@ -478,13 +492,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     model_failed = False
     if MODEL_SUMMARY:
         try:
-            answer = await asyncio.to_thread(
-                llm.generate, build_messages(user_text, context_text)
-            )
+            answer = await asyncio.to_thread(llm.generate, build_messages(user_text, context_text))
         except llm.LLMError as exc:
             log.error("خطای مدل: %s", exc)
             model_failed = True
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("خطای پیش‌بینی‌نشدهٔ مدل")
             model_failed = True
 
@@ -503,8 +515,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             final = f"{facts}\n\n🤖 جمع‌بندی مدل:\n{answer}"
         else:
             final = facts + (fallback.OFFLINE_NOTE if model_failed else "")
-        log.info("پاسخ قطعی ارسال شد (جمع‌بندی مدل: %s | مدل صدا زده شد: %s).",
-                 useful, MODEL_SUMMARY)
+        log.info(
+            "پاسخ قطعی ارسال شد (جمع‌بندی مدل: %s | مدل صدا زده شد: %s).", useful, MODEL_SUMMARY
+        )
     elif answer:
         final = answer
     elif not MODEL_SUMMARY:
@@ -542,22 +555,25 @@ async def auto_stop(app, minutes: float) -> None:
 async def on_startup(app) -> None:
     if RUN_DURATION_MINUTES > 0:
         app.create_task(auto_stop(app, RUN_DURATION_MINUTES))
-        log.info("این نمونه %.0f دقیقه اجرا می‌شود، سپس جایش را به run بعدی می‌دهد.",
-                 RUN_DURATION_MINUTES)
+        log.info(
+            "این نمونه %.0f دقیقه اجرا می‌شود، سپس جایش را به run بعدی می‌دهد.", RUN_DURATION_MINUTES
+        )
     global MODEL_READY
     if not (MODEL_SUMMARY or DEEP_ENABLED):
-        log.info("هم MODEL_SUMMARY و هم DEEP_MODE خاموش‌اند ⇒ پاسخ‌ها فقط از داده "
-                 "ساخته می‌شوند؛ نیازی به Ollama نیست.")
+        log.info(
+            "هم MODEL_SUMMARY و هم DEEP_MODE خاموش‌اند ⇒ پاسخ‌ها فقط از داده "
+            "ساخته می‌شوند؛ نیازی به Ollama نیست."
+        )
         return
     if not llm.wait_for_server(timeout=120):
-        log.error("سرویس Ollama در %s بالا نیامد؛ حالت مدل غیرفعال می‌ماند.",
-                  llm.OLLAMA_HOST)
+        log.error("سرویس Ollama در %s بالا نیامد؛ حالت مدل غیرفعال می‌ماند.", llm.OLLAMA_HOST)
         return
     log.info("سرویس Ollama در دسترس است (%s).", llm.OLLAMA_HOST)
     if not llm.model_is_available():
         log.error(
             "مدل «%s» نصب نیست (ollama pull %s)؛ حالت مدل غیرفعال می‌ماند.",
-            llm.MODEL_NAME, llm.MODEL_NAME,
+            llm.MODEL_NAME,
+            llm.MODEL_NAME,
         )
         return
     log.info("مدل «%s» آماده است؛ در حال بارگذاری در حافظه…", llm.MODEL_NAME)
@@ -571,12 +587,7 @@ def main() -> None:
         log.error("متغیر محیطی TELEGRAM_BOT_TOKEN تنظیم نشده است.")
         raise SystemExit(1)
 
-    app = (
-        ApplicationBuilder()
-        .token(TELEGRAM_BOT_TOKEN)
-        .post_init(on_startup)
-        .build()
-    )
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(on_startup).build()
     app.add_handler(CommandHandler(["start", "help"], start_command))
     app.add_handler(CommandHandler("deep", deep_command))
     app.add_handler(CommandHandler("api", api_command))
@@ -587,13 +598,14 @@ def main() -> None:
     # آمادگی مدل محلی تا اجرای on_startup معلوم نیست؛ آن وضعیت همان‌جا لاگ می‌شود.
     log.info(
         "🚀 ربات فعال شد | پاسخ سریع: همیشه | API «%s»: %s",
-        api_llm.model_label(), "فعال" if can_offer_api() else "غیرفعال (کلید نیست)",
+        api_llm.model_label(),
+        "فعال" if can_offer_api() else "غیرفعال (کلید نیست)",
     )
     log.info(
         "🎟 سهمیه‌ی روزانه: مدل محلی %s بار · API %s بار برای هر کاربر | پشتیبان: %s",
-        quota.LIMITS["deep"], quota.LIMITS["api"],
-        "شاخه‌ی " + quota.STATE_BRANCH if QUOTA.remote and QUOTA.persist_remote
-        else "فایل محلی",
+        quota.LIMITS["deep"],
+        quota.LIMITS["api"],
+        "شاخه‌ی " + quota.STATE_BRANCH if QUOTA.remote and QUOTA.persist_remote else "فایل محلی",
     )
     app.run_polling(drop_pending_updates=True)
 

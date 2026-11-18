@@ -1,18 +1,18 @@
-"""اسکریپت kiểm tra تمام ایمپورت‌های ماژول‌های src."""
+"""اسکریپت kiểm tra تمام ایمپورت‌های ماژول‌های amoozesh_bot."""
 
 from __future__ import annotations
 
 import sys
 
 MODULES = [
-    "src",
-    "src.exceptions",
-    "src.config",
-    "src.logging_config",
-    "src.models",
-    "src.data_validator",
-    "src.retrieval",
-    "src.bot",
+    "amoozesh_bot",
+    "amoozesh_bot.exceptions",
+    "amoozesh_bot.config",
+    "amoozesh_bot.logging_config",
+    "amoozesh_bot.models",
+    "amoozesh_bot.data_validator",
+    "amoozesh_bot.retrieval",
+    "amoozesh_bot.bot",
 ]
 
 failed = []
@@ -20,7 +20,7 @@ for mod in MODULES:
     try:
         __import__(mod)
         print(f"✅ {mod}")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"❌ {mod}: {exc}")
         failed.append(mod)
 

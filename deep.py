@@ -148,10 +148,12 @@ def build_deep_context(store, query: str) -> tuple[str, dict]:
             if items:
                 evidence_lines.append(f"### {name}\n" + "\n".join(items))
         if evidence_lines:
-            sections.append((
-                "شواهد کلیدی (خلاصه‌ی ماشینی؛ برای قضاوت سریع از این شروع کن)",
-                "\n\n".join(evidence_lines),
-            ))
+            sections.append(
+                (
+                    "شواهد کلیدی (خلاصه‌ی ماشینی؛ برای قضاوت سریع از این شروع کن)",
+                    "\n\n".join(evidence_lines),
+                )
+            )
 
         sections.append(("متن کامل نظرات دانشجویان (بدون ویرایش)", "\n\n".join(bodies)))
         meta["professors"] = named
@@ -170,10 +172,12 @@ def build_deep_context(store, query: str) -> tuple[str, dict]:
     info = store.eligibility_info(query)
     if info:
         verdict = "مجاز است" if info["allowed"] else "مجاز نیست"
-        sections.append((
-            "حکم قطعی مجاز بودن (از knowledge_base؛ این خط درست است)",
-            f"«{info['course']}» برای ورودی {info['year']}: {verdict} — {info['reason']}",
-        ))
+        sections.append(
+            (
+                "حکم قطعی مجاز بودن (از knowledge_base؛ این خط درست است)",
+                f"«{info['course']}» برای ورودی {info['year']}: {verdict} — {info['reason']}",
+            )
+        )
 
     if not sections:
         # پرسش عمومی: کلیدواژه‌ای نزدیک‌ترین‌ها را می‌آوریم تا مدل دست خالی نماند.
@@ -181,8 +185,9 @@ def build_deep_context(store, query: str) -> tuple[str, dict]:
         for professor, _ in store.match_professors(kws)[:MAX_PROFESSORS]:
             digest, body = _professor_block(store, professor.name)
             if digest:
-                sections.append((f"نزدیک‌ترین شناسنامه: {professor.name}",
-                                 digest + "\n" + body[:1500]))
+                sections.append(
+                    (f"نزدیک‌ترین شناسنامه: {professor.name}", digest + "\n" + body[:1500])
+                )
 
     context = "\n\n".join(f"## {title}\n{body}" for title, body in sections)
     if len(context) > DEEP_CONTEXT_CHARS:
@@ -236,9 +241,7 @@ def verify_analysis_text(text: str, context: str) -> tuple[bool, str]:
         variants = {score}
         if "." in score:
             variants.add(score.rstrip("0").rstrip("."))
-        if not any(
-            re.search(rf"(?<![\d.]){re.escape(v)}(?![\d])", ctx) for v in variants
-        ):
+        if not any(re.search(rf"(?<![\d.]){re.escape(v)}(?![\d])", ctx) for v in variants):
             return False, f"امتیاز ساختگی: {score}"
 
     # خروجی مدل باید فارسی باشد؛ حروف لاتین نشانه‌ی متن مخدوش است
@@ -291,20 +294,41 @@ def analyze(store, query: str, provider: str = "local") -> dict:
     started = time.time()
 
     if not context.strip():
-        return {"ok": False, "text": "", "reason": "برای این پرسش داده‌ای پیدا نشد",
-                "model_failed": False, "elapsed": 0.0, "meta": meta, "raw": "",
-                "provider": provider}
+        return {
+            "ok": False,
+            "text": "",
+            "reason": "برای این پرسش داده‌ای پیدا نشد",
+            "model_failed": False,
+            "elapsed": 0.0,
+            "meta": meta,
+            "raw": "",
+            "provider": provider,
+        }
 
     try:
         raw = _generate(provider, build_analysis_messages(query, context))
     except (llm.LLMError, api_llm.APIError) as exc:
-        return {"ok": False, "text": "", "reason": str(exc), "model_failed": True,
-                "elapsed": round(time.time() - started, 1), "meta": meta, "raw": "",
-                "provider": provider}
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "text": "", "reason": f"خطای پیش‌بینی‌نشده: {exc}",
-                "model_failed": True, "elapsed": round(time.time() - started, 1),
-                "meta": meta, "raw": "", "provider": provider}
+        return {
+            "ok": False,
+            "text": "",
+            "reason": str(exc),
+            "model_failed": True,
+            "elapsed": round(time.time() - started, 1),
+            "meta": meta,
+            "raw": "",
+            "provider": provider,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "text": "",
+            "reason": f"خطای پیش‌بینی‌نشده: {exc}",
+            "model_failed": True,
+            "elapsed": round(time.time() - started, 1),
+            "meta": meta,
+            "raw": "",
+            "provider": provider,
+        }
 
     text = fallback.sanitize_model_text(raw, allow_verdict=True, limit=2500)
     ok, why = verify_analysis_text(text, context)

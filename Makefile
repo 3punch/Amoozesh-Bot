@@ -1,20 +1,17 @@
-# ==============================================================================
-# Amoozesh-Bot — Makefile برای developرها
-# ==============================================================================
+# Developer commands for Amoozesh-Bot.
 
 .PHONY: install test lint type-check sec format clean run verify
 
 install:
-	pip install --upgrade pip
-	pip install -r requirements.txt
-	pip install -e ".[dev]"
+	python -m pip install --upgrade pip
+	python -m pip install -e ".[dev]"
 
 test:
-	pytest tests -v --cov=src --cov-report=term-missing
+	pytest tests -v --cov-fail-under=70
 
 lint:
-	ruff check src tests
-	ruff format --check src tests
+	ruff check *.py src tests scripts
+	ruff format --check *.py src tests scripts
 
 type-check:
 	mypy src
@@ -23,8 +20,8 @@ sec:
 	bandit -r src -q
 
 format:
-	ruff check --fix src tests
-	ruff format src tests
+	ruff check --fix src tests scripts
+	ruff format src tests scripts
 
 verify:
 	python scripts/verify_imports.py
@@ -34,6 +31,3 @@ clean:
 
 run:
 	python EntekhabVahedBot.py
-
-help:
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'

@@ -27,11 +27,12 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import deep  # noqa: E402
-from retrieval import DataStore, normalize  # noqa: E402
+import deep
+from retrieval import DataStore, normalize
 
-GOLDEN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                      "eval", "golden.json")
+GOLDEN = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "eval", "golden.json"
+)
 
 
 def load_cases() -> list[dict]:
@@ -54,8 +55,10 @@ def score_case(case: dict, result: dict) -> dict:
         "entity": entity_ok,
         "verify": bool(result.get("ok")),
         "forbid_hit": forbid_hit,
-        "passed": bool(result.get("ok")) and first.startswith("نتیجه")
-                  and entity_ok and not forbid_hit,
+        "passed": bool(result.get("ok"))
+        and first.startswith("نتیجه")
+        and entity_ok
+        and not forbid_hit,
         "reason": result.get("reason", ""),
         "elapsed": result.get("elapsed", 0.0),
         "text": text,
@@ -78,17 +81,23 @@ def main() -> int:
     store = DataStore(".")
     rows = []
     started = time.time()
-    print(f"🧪 سنجش {len(cases)} مورد با provider={args.provider} "
-          f"({deep.provider_label(args.provider)})\n")
+    print(
+        f"🧪 سنجش {len(cases)} مورد با provider={args.provider} "
+        f"({deep.provider_label(args.provider)})\n"
+    )
 
     for case in cases:
         result = deep.analyze(store, case["query"], provider=args.provider)
         row = score_case(case, result)
         rows.append(row)
         mark = "✅" if row["passed"] else "❌"
-        detail = "" if row["passed"] else (
-            f"ok={row['ok']} format={row['format']} entity={row['entity']} "
-            f"reason={row['reason'][:40]}"
+        detail = (
+            ""
+            if row["passed"]
+            else (
+                f"ok={row['ok']} format={row['format']} entity={row['entity']} "
+                f"reason={row['reason'][:40]}"
+            )
         )
         print(f"{mark} {row['id']:<28} {row['elapsed']:>6.1f}s  {detail}")
         if args.show and row["text"]:
@@ -99,16 +108,28 @@ def main() -> int:
     rate = passed / max(len(rows), 1)
     total_time = time.time() - started
     print(f"\n📊 {passed}/{len(rows)} قبول ({rate:.0%}) در {total_time:.1f} ثانیه")
-    print(f"   format: {sum(r['format'] for r in rows)}/{len(rows)} · "
-          f"entity: {sum(r['entity'] for r in rows)}/{len(rows)} · "
-          f"verify: {sum(r['verify'] for r in rows)}/{len(rows)}")
+    print(
+        f"   format: {sum(r['format'] for r in rows)}/{len(rows)} · "
+        f"entity: {sum(r['entity'] for r in rows)}/{len(rows)} · "
+        f"verify: {sum(r['verify'] for r in rows)}/{len(rows)}"
+    )
 
     if args.json_path:
         with open(args.json_path, "w", encoding="utf-8") as handle:
-            json.dump({"provider": args.provider, "model": deep.provider_label(args.provider),
-                       "passed": passed, "total": len(rows), "rate": rate,
-                       "seconds": round(total_time, 1), "rows": rows},
-                      handle, ensure_ascii=False, indent=2)
+            json.dump(
+                {
+                    "provider": args.provider,
+                    "model": deep.provider_label(args.provider),
+                    "passed": passed,
+                    "total": len(rows),
+                    "rate": rate,
+                    "seconds": round(total_time, 1),
+                    "rows": rows,
+                },
+                handle,
+                ensure_ascii=False,
+                indent=2,
+            )
         print(f"   گزارش JSON: {args.json_path}")
 
     return 0 if rate >= args.threshold else 1

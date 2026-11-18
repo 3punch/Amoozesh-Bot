@@ -119,8 +119,9 @@ class GitHubState:
     شاخه با اولین PUT خودکار ساخته می‌شود؛ اگر شاخه نبود، از `main` منشعب می‌شود.
     """
 
-    def __init__(self, repository: str, token: str, branch: str = STATE_BRANCH,
-                 path: str = STATE_FILE):
+    def __init__(
+        self, repository: str, token: str, branch: str = STATE_BRANCH, path: str = STATE_FILE
+    ):
         self.repository = repository
         self.token = token
         self.branch = branch
@@ -198,13 +199,15 @@ class GitHubState:
 class QuotaStore:
     """شمارنده‌ی روزانه برای هر کاربر و هر نوع درخواست."""
 
-    def __init__(self, path: str = STATE_PATH, remote: GitHubState | None = None,
-                 persist_remote: bool | None = None):
+    def __init__(
+        self,
+        path: str = STATE_PATH,
+        remote: GitHubState | None = None,
+        persist_remote: bool | None = None,
+    ):
         self.path = path
         self.remote = remote
-        self.persist_remote = (
-            PERSIST if persist_remote is None else (persist_remote and PERSIST)
-        )
+        self.persist_remote = PERSIST if persist_remote is None else (persist_remote and PERSIST)
         self._lock = threading.Lock()
         self._data: dict[str, dict[str, dict[str, int]]] = _load_json(path)
 
@@ -321,6 +324,6 @@ def create_store(path: str = STATE_PATH) -> QuotaStore:
     store = QuotaStore(path=path, remote=build_remote())
     try:
         store.sync()
-    except Exception as exc:  # noqa: BLE001 - سهمیه نباید ربات را بخواباند
+    except Exception as exc:
         log.warning("همگام‌سازی سهمیه ناموفق بود: %s", exc)
     return store

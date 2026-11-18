@@ -67,9 +67,6 @@ htmlcov/
 mypy.ini
 .ruff_cache/
 
-# Docker
-.dockerignore
-
 # OS
 Thumbs.db
 ehthumbs.db

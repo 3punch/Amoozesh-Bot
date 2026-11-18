@@ -47,7 +47,15 @@ STOPWORDS = set(
 
 # پیشوندهای رایج نام درس که دانشجو معمولاً در پرسش حذف می‌کند
 COURSE_PREFIX = {
-    "مقدمه", "ای", "بر", "آشنایی", "با", "اصول", "مبانی", "کلیات", "درس",
+    "مقدمه",
+    "ای",
+    "بر",
+    "آشنایی",
+    "با",
+    "اصول",
+    "مبانی",
+    "کلیات",
+    "درس",
 }
 
 
@@ -66,7 +74,7 @@ def normalize(text) -> str:
 def keywords(text: str, min_len: int = 2) -> list[str]:
     out: list[str] = []
     for tok in normalize(text).split():
-        if len(tok) < min_len or tok in STOPWORDS or tok.isdigit() and len(tok) < 3:
+        if len(tok) < min_len or tok in STOPWORDS or (tok.isdigit() and len(tok) < 3):
             continue
         if tok not in out:
             out.append(tok)
@@ -183,16 +191,49 @@ def schedule_parts(raw) -> tuple[set[str], set[str]]:
 
 
 OPINION_MARKERS = (
-    "راحت", "سخت", "نمره", "حضور", "غیاب", "امتحان", "میان‌ترم", "میانترم", "پایان‌ترم",
-    "جزوه", "تدریس", "اکی", "اوکی", "عالی", "خوب", "بد ", "افتضاح", "پاس", "تشریحی",
-    "تست", "پیشنهاد", "تعریف", "گیر", "سختگیر", "منصف", "واقعا", "بنظرم", "به نظر",
-    "تجربه", "داشتم", "برداشتم", "ارائه", "حذف", "اضافه", "نمره‌دهی", "تصحیح",
+    "راحت",
+    "سخت",
+    "نمره",
+    "حضور",
+    "غیاب",
+    "امتحان",
+    "میان‌ترم",
+    "میانترم",
+    "پایان‌ترم",
+    "جزوه",
+    "تدریس",
+    "اکی",
+    "اوکی",
+    "عالی",
+    "خوب",
+    "بد ",
+    "افتضاح",
+    "پاس",
+    "تشریحی",
+    "تست",
+    "پیشنهاد",
+    "تعریف",
+    "گیر",
+    "سختگیر",
+    "منصف",
+    "واقعا",
+    "بنظرم",
+    "به نظر",
+    "تجربه",
+    "داشتم",
+    "برداشتم",
+    "ارائه",
+    "حذف",
+    "اضافه",
+    "نمره‌دهی",
+    "تصحیح",
 )
 QUESTION_MARKERS = ("؟", "?", "چجور", "چطور", "کسی", "چیه", "میدونه", "می‌دونه", "داره")
 
 
 def prioritize_comments(comments: list[str]) -> list[str]:
     """نظرات حاوی ارزیابی واقعی را بالا می‌آورد؛ سوال‌های خالی را پایین."""
+
     def score(text: str) -> int:
         t = text.lower()
         pts = sum(2 for m in OPINION_MARKERS if m in t)
@@ -232,7 +273,7 @@ class DataStore:
             df = df.fillna("")
             self.courses = df
             self.log.append(f"✅ جدول دروس: {len(df)} ردیف بارگذاری شد.")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self.courses = None
             self.log.append(f"⚠️ خطا در خواندن courses.xlsx: {exc}")
 
@@ -250,7 +291,7 @@ class DataStore:
         if hits:
             for i, m in enumerate(hits):
                 end = hits[i + 1].start() if i + 1 < len(hits) else len(raw)
-                body = raw[m.end():end]
+                body = raw[m.end() : end]
                 body = re.sub(r"^=+\s*$", "", body, flags=re.MULTILINE)
                 body = re.sub(r"^تعداد نظرات:.*$", "", body, flags=re.MULTILINE)
                 body = re.sub(r"\n{2,}", "\n", body).strip()
@@ -258,8 +299,11 @@ class DataStore:
                     blocks.append((m.group(1).strip(), body))
         else:
             # سازگاری با فایل‌های قدیمی که با --- جدا شده‌اند
-            blocks = [(f"بلوک {i + 1}", b.strip())
-                      for i, b in enumerate(raw.split("\n---\n")) if b.strip()]
+            blocks = [
+                (f"بلوک {i + 1}", b.strip())
+                for i, b in enumerate(raw.split("\n---\n"))
+                if b.strip()
+            ]
 
         self.professors = []
         total_dropped = 0
@@ -289,7 +333,7 @@ class DataStore:
                 (page.extract_text() or "") for page in reader.pages
             ).strip()
             self.log.append(f"✅ چارت درسی: {len(self.curriculum)} کاراکتر.")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self.curriculum = ""
             self.log.append(f"⚠️ خطا در خواندن curriculum.pdf: {exc}")
 
@@ -470,13 +514,14 @@ class DataStore:
         nq = normalize(query)
         if re.search(r"\b140[0-9]\b", nq):
             return True
-        return any(word in nq for word in
-                   ("ورودی", "مجاز", "محدودیت", "ظرفیت", "قابل اخذ", "پیش نیاز"))
+        return any(
+            word in nq for word in ("ورودی", "مجاز", "محدودیت", "ظرفیت", "قابل اخذ", "پیش نیاز")
+        )
 
     def eligibility_info(self, query: str) -> dict | None:
         """ساختارمند: آیا درس X برای ورودی Y مجاز است؟ (None اگر سوال این نباشد)"""
         nquery = normalize(query)
-        years = sorted({y for y in re.findall(r"\b(140[0-9])\b", nquery)})
+        years = sorted(set(re.findall(r"\b(140[0-9])\b", nquery)))
         if not years:
             return None
 
@@ -527,19 +572,23 @@ class DataStore:
                 professor = str(row.get("استاد", "")).strip()
                 when = short_schedule(row.get("زمان‌بندی تشکیل کلاس"))
                 labels.append(f"{professor} ({when})" if when else professor)
-            reason = (f"فقط در ارائه‌ی {'، '.join(labels)}؛ "
-                      f"بقیه‌ی ارائه‌های این درس ویژه‌ی ورودی "
-                      f"{fa_digits('، '.join(course_rules))} است.")
+            reason = (
+                f"فقط در ارائه‌ی {'، '.join(labels)}؛ "
+                f"بقیه‌ی ارائه‌های این درس ویژه‌ی ورودی "
+                f"{fa_digits('، '.join(course_rules))} است."
+            )
         elif allowed:
             if course_rules:
-                reason = (f"این درس ویژه‌ی ورودی {fa_digits('، '.join(course_rules))} "
-                          "ارائه شده است.")
+                reason = f"این درس ویژه‌ی ورودی {fa_digits('، '.join(course_rules))} ارائه شده است."
             else:
-                reason = ("این درس در فهرست دروس محدودشده نیست و "
-                          "همه‌ی ورودی‌ها می‌توانند آن را اخذ کنند.")
+                reason = (
+                    "این درس در فهرست دروس محدودشده نیست و همه‌ی ورودی‌ها می‌توانند آن را اخذ کنند."
+                )
         else:
-            reason = (f"این درس فقط برای ورودی {fa_digits('، '.join(course_rules))} "
-                      "مجاز است و برای این ورودی باز نیست.")
+            reason = (
+                f"این درس فقط برای ورودی {fa_digits('، '.join(course_rules))} "
+                "مجاز است و برای این ورودی باز نیست."
+            )
 
         return {
             "course": best,
@@ -582,7 +631,8 @@ class DataStore:
         if self.courses is None or not course_norm:
             return []
         return [
-            row for _, row in self.courses.iterrows()
+            row
+            for _, row in self.courses.iterrows()
             if normalize(str(row.get("نام درس", ""))) == course_norm
         ]
 
@@ -623,15 +673,13 @@ class DataStore:
         if self.courses is None:
             return []
         target = normalize(name)
-        rows = self.courses[
-            self.courses.get("استاد", "").astype(str).map(normalize) == target
-        ]
+        rows = self.courses[self.courses.get("استاد", "").astype(str).map(normalize) == target]
         if rows.empty:
             # تطابق نسبی (مثلاً بخشی از نام)
             rows = self.courses[
-                self.courses.get("استاد", "").astype(str).map(
-                    lambda v: target in normalize(v) or normalize(v) in target
-                )
+                self.courses.get("استاد", "")
+                .astype(str)
+                .map(lambda v: target in normalize(v) or normalize(v) in target)
             ]
         return [self._format_course(r).lstrip("- ") for _, r in rows.head(6).iterrows()]
 
@@ -684,7 +732,9 @@ class DataStore:
 
         verdict = self.check_eligibility(query)
         if verdict:
-            sections.insert(0, ("پاسخ قطعی بررسی خودکار (این خط درست است، از آن استفاده کن)", verdict))
+            sections.insert(
+                0, ("پاسخ قطعی بررسی خودکار (این خط درست است، از آن استفاده کن)", verdict)
+            )
 
         if courses:
             rows = "\n".join(self._format_course(r) for r in courses)
@@ -703,11 +753,11 @@ class DataStore:
                     body = body[:MAX_PROF_BLOCK_CHARS].rstrip() + " ..."
                 note = ""
                 if not p.comments:
-                    note = ("\n(در آرشیو فقط سوال/لینک درباره‌ی این استاد بوده و "
-                            "ارزیابی واقعی دانشجویی ثبت نشده است.)")
-                blocks.append(
-                    f"«{p.name}» (تعداد نظر مفید: {len(p.comments)}):\n{body}{note}"
-                )
+                    note = (
+                        "\n(در آرشیو فقط سوال/لینک درباره‌ی این استاد بوده و "
+                        "ارزیابی واقعی دانشجویی ثبت نشده است.)"
+                    )
+                blocks.append(f"«{p.name}» (تعداد نظر مفید: {len(p.comments)}):\n{body}{note}")
             sections.append(("نظرات دانشجویان درباره استاد(های) سوال", "\n\n".join(blocks)))
 
         if curriculum:
@@ -746,8 +796,14 @@ if __name__ == "__main__":  # اجرای مستقیم برای بررسی سری
     store = DataStore(".")
     for line in store.log:
         print(line)
-    for q in ["بهینه سازی خطی برای ورودی ۱۴۰۳ مجازه؟", "استاد ایزدیخواه چطوره؟",
-              "ساختمان داده و الگوریتم ها با همامی", "سلام"]:
+    for q in [
+        "بهینه سازی خطی برای ورودی ۱۴۰۳ مجازه؟",
+        "استاد ایزدیخواه چطوره؟",
+        "ساختمان داده و الگوریتم ها با همامی",
+        "سلام",
+    ]:
         ctx, st = store.build_context(q)
-        print(f"\n--- سوال: {q}\n    {st['chars']} کاراکتر / ~{st['tokens']} توکن | "
-              f"استادها: {st['professors']} | درس‌ها: {st['courses']}")
+        print(
+            f"\n--- سوال: {q}\n    {st['chars']} کاراکتر / ~{st['tokens']} توکن | "
+            f"استادها: {st['professors']} | درس‌ها: {st['courses']}"
+        )

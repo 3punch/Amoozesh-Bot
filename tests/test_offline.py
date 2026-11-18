@@ -14,6 +14,11 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+try:
+    import pytest
+except ImportError:  # pragma: no cover - the bot runner installs runtime deps only
+    pytest = None
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 FAILS = []
@@ -25,7 +30,19 @@ def check(name, cond, detail=""):
         FAILS.append(name)
 
 
+if pytest is not None:
+
+    @pytest.fixture(autouse=True)
+    def custom_contract_checks_must_pass():
+        """Bridge the legacy check() harness into pytest's failure reporting."""
+        start = len(FAILS)
+        yield
+        failures = FAILS[start:]
+        assert not failures, "Offline contract checks failed: " + ", ".join(failures)
+
+
 # ---------------------------------------------------------------- 1) retrieval
+
 
 def test_retrieval():
     print("\n[۱] لایه‌ی بازیابی (retrieval)")
@@ -33,8 +50,11 @@ def test_retrieval():
 
     store = DataStore(".")
     check("جدول دروس بارگذاری شد", store.courses is not None and len(store.courses) > 50)
-    check("شناسنامه‌های استاد جدا شدند (۳۵ مورد)", len(store.professors) == 35,
-          f"شد {len(store.professors)}")
+    check(
+        "شناسنامه‌های استاد جدا شدند (۳۵ مورد)",
+        len(store.professors) == 35,
+        f"شد {len(store.professors)}",
+    )
     check("نرمال‌سازی ی/ك", normalize("علي كريمي") == "علی کریمی")
     check("اعداد فارسی", "1403" in normalize("ورودی ۱۴۰۳"))
     check("حذف کلمات پوچ", "استاد" not in keywords("استاد ایزدیخواه چطوره"))
@@ -64,11 +84,16 @@ def test_retrieval():
         check("پیام‌های لینکی حذف شدند", prof.dropped_comments >= 1, f"{prof.dropped_comments}")
         check("نظر مفید ثبت شده", len(prof.comments) >= 5, f"{len(prof.comments)}")
         joined = " ".join(prof.comments)
-        check("تبلیغ ربات/کانال حذف شد", "tahqiqat_bot" not in joined and "@unni_news" not in joined)
+        check(
+            "تبلیغ ربات/کانال حذف شد", "tahqiqat_bot" not in joined and "@unni_news" not in joined
+        )
         check("لینک‌های t.me حذف شدند", "t.me/" not in joined)
         top = " ".join(prioritize_comments(prof.comments)[:3])
-        check("ارزیابی واقعی در صدر نظرات است",
-              any(w in top for w in ("نمره", "ارفاق", "استاد خوبی", "اره", "اکی", "حضور")), top[:80])
+        check(
+            "ارزیابی واقعی در صدر نظرات است",
+            any(w in top for w in ("نمره", "ارفاق", "استاد خوبی", "اره", "اکی", "حضور")),
+            top[:80],
+        )
 
     q_prof = "استاد آذر ابوالقاسمی چطور استادی هستن"
     ctx, st = store.build_context(q_prof)
@@ -76,10 +101,12 @@ def test_retrieval():
     check("دروس خود استاد آورده شد", "مبانی کارآفرینی" in ctx)
     check("ارزیابی واقعی به مدل می‌رسد", "ارفاق" in ctx or "استاد خوبی" in ctx)
     check("پرامپت کل کوچک است", st["tokens"] < 900, f"~{st['tokens']} توکن")
-    check("کلیدواژه‌های پوچ حذف شدند", "استادی" not in st["keywords"] and "هستن" not in st["keywords"])
+    check(
+        "کلیدواژه‌های پوچ حذف شدند", "استادی" not in st["keywords"] and "هستن" not in st["keywords"]
+    )
 
     q_course = "بهینه سازی خطی برای ورودی ۱۴۰۳ مجازه؟"
-    ctx2, st2 = store.build_context(q_course)
+    ctx2, _ = store.build_context(q_course)
     check("برای سوال مجاز بودن، قوانین ورودی‌ها حاضر است", "قوانین ورودی‌ها" in ctx2)
 
     print("\n  [بررسی قطعی مجاز بودن درس]")
@@ -94,11 +121,14 @@ def test_retrieval():
     ]
     for q, want in truth:
         got = store.check_eligibility(q)
-        check(f"{q[:45]} → {want or 'بدون حکم'}", (want in got) if want else got == "",
-              got or "خالی")
+        check(
+            f"{q[:45]} → {want or 'بدون حکم'}", (want in got) if want else got == "", got or "خالی"
+        )
         if want:
             ctx, st = store.build_context(q)
-            check("حکم قطعی اول زمینه است", ctx.startswith("### پاسخ قطعی") and st["verdict"] == got)
+            check(
+                "حکم قطعی اول زمینه است", ctx.startswith("### پاسخ قطعی") and st["verdict"] == got
+            )
 
     print("  ℹ️  میانگین اندازه‌ی زمینه:", end=" ")
     sizes = [store.build_context(q)[1]["tokens"] for q, _, _ in cases]
@@ -106,6 +136,7 @@ def test_retrieval():
 
 
 # ---------------------------------------------------------------- 2) ollama
+
 
 class FakeOllama(BaseHTTPRequestHandler):
     mode = "ok"
@@ -135,10 +166,13 @@ class FakeOllama(BaseHTTPRequestHandler):
         if FakeOllama.mode == "500":
             return self._send(500, {"error": "boom"})
         assert body.get("model"), "مدل در payload نیست"
-        return self._send(200, {
-            "message": {"role": "assistant", "content": "نتیجه: مجاز است."},
-            "done_reason": "stop",
-        })
+        return self._send(
+            200,
+            {
+                "message": {"role": "assistant", "content": "نتیجه: مجاز است."},
+                "done_reason": "stop",
+            },
+        )
 
 
 def test_llm_client():
@@ -150,7 +184,9 @@ def test_llm_client():
     os.environ["OLLAMA_HOST"] = f"http://127.0.0.1:{port}"
     os.environ["MODEL_NAME"] = "gemma3:4b"
     import importlib
+
     import llm
+
     importlib.reload(llm)
 
     check("wait_for_server", llm.wait_for_server(timeout=5))
@@ -176,27 +212,32 @@ def test_llm_client():
 
 # ---------------------------------------------------------------- 3) prompts
 
+
 def test_prompts():
     print("\n[۳] پرامپت و شکستن پیام")
     from prompts import SYSTEM_PROMPT, build_messages
 
     msgs = build_messages("سوال تست", "زمینه تست")
-    check("نقش system و user درست است",
-          [m["role"] for m in msgs] == ["system", "user"])
+    check("نقش system و user درست است", [m["role"] for m in msgs] == ["system", "user"])
     check("زمینه در system جای‌گذاری شد", "زمینه تست" in msgs[0]["content"])
     check("قاعده‌ی ضدتوهم در پرامپت هست", "از خودت نساز" in SYSTEM_PROMPT)
     check("محدودیت طول در پرامپت هست", "حداکثر ۳ خط" in SYSTEM_PROMPT)
     check("طول پرامپت پایه < ۱۵۰۰ کاراکتر", len(SYSTEM_PROMPT) < 1500)
 
     import llm as _llm
+
     old_model, old_think = _llm.MODEL_NAME, _llm.THINK
     try:
         _llm.MODEL_NAME, _llm.THINK = "qwen3:4b", False
-        check("برای Qwen3، no_think تزریق می‌شود",
-              build_messages("سوال", "زمینه")[1]["content"].endswith("/no_think"))
+        check(
+            "برای Qwen3، no_think تزریق می‌شود",
+            build_messages("سوال", "زمینه")[1]["content"].endswith("/no_think"),
+        )
         _llm.MODEL_NAME = "qwen2.5:7b"
-        check("برای Qwen2.5، no_think تزریق نمی‌شود",
-              "/no_think" not in build_messages("سوال", "زمینه")[1]["content"])
+        check(
+            "برای Qwen2.5، no_think تزریق نمی‌شود",
+            "/no_think" not in build_messages("سوال", "زمینه")[1]["content"],
+        )
     finally:
         _llm.MODEL_NAME, _llm.THINK = old_model, old_think
 
@@ -213,6 +254,7 @@ def test_prompts():
 
 # ---------------------------------------------------------------- 3.5) fallback
 
+
 def test_fallback():
     print("\n[۳.۵] پاسخ قطعی بدون مدل (fallback)")
     import fallback
@@ -225,25 +267,40 @@ def test_fallback():
 
     card = fallback.answer(store, "استاد آذر ابوالقاسمی چطور استادی هستن")
     check("کارت استاد ساخته شد", card and "آذر ابوالقاسمی" in card)
-    check("پرسش ارزشیِ محاوره‌ای به‌عنوان سوال شناخته می‌شود",
-          fallback._is_question("ارزش داره رحیمه نجات حذف کنم معادلات دیفرانسیل بردارم؟"))
-    casual = fallback.answer(store,
-        "ارزش داره رحیمه نجات حذف کنم معادلات دیفرانسیل بردارم چون عاصیمان دیگه نیست؟")
-    check("نام محاوره‌ای «رحیمه» به استاد رحیم می‌رسد",
-          casual and "محمد رحیم" in casual and "ارزیابی ثبت‌شده‌ای" in casual, str(casual)[:160])
+    check(
+        "پرسش ارزشیِ محاوره‌ای به‌عنوان سوال شناخته می‌شود",
+        fallback._is_question("ارزش داره رحیمه نجات حذف کنم معادلات دیفرانسیل بردارم؟"),
+    )
+    casual = fallback.answer(
+        store, "ارزش داره رحیمه نجات حذف کنم معادلات دیفرانسیل بردارم چون عاصیمان دیگه نیست؟"
+    )
+    check(
+        "نام محاوره‌ای «رحیمه» به استاد رحیم می‌رسد",
+        casual and "محمد رحیم" in casual and "ارزیابی ثبت‌شده‌ای" in casual,
+        str(casual)[:160],
+    )
     check("نمره‌دهی از فرم استخراج شد", "ارفاق" in card, card[:80])
     check("امتیازهای فرم استخراج شد", "۹.۶ از ۱۰" in card, card[:200])
-    check("نظر واقعی پیش از جمع‌بندی دیده می‌شود",
-          card.startswith("👤") and card.index("💬 نظرهای واقعی") < card.index("🎯 جمع‌بندی آماری"))
+    check(
+        "نظر واقعی پیش از جمع‌بندی دیده می‌شود",
+        card.startswith("👤") and card.index("💬 نظرهای واقعی") < card.index("🎯 جمع‌بندی آماری"),
+    )
     # چند نظر واقعی باید عیناً نمایش داده شود، اما پرسش/اطلاعات شخصی نباید.
     prof = next(x for x in store.professors if "ابوالقاسمی" in x.norm_name)
     opinion = fallback._sample_opinions(prof.comments, professor_name=prof.name, store=store)
-    check("نظر واقعی از آرشیو نمایش داده شد",
-          bool(opinion) and all(item in card for item in opinion), str(opinion))
-    check("پرسش‌های آرشیو به‌عنوان نظر نمایش داده نشد",
-          not any(c[:50] in card for c in prof.comments if fallback._is_question(c)))
-    check("پیام‌های اطلاع‌رسانی/ثبت‌نام نقل‌قول نشده‌اند",
-          "کد ارائه" not in card and "ترم تحصیلی" not in card and "#لینک" not in card)
+    check(
+        "نظر واقعی از آرشیو نمایش داده شد",
+        bool(opinion) and all(item in card for item in opinion),
+        str(opinion),
+    )
+    check(
+        "پرسش‌های آرشیو به‌عنوان نظر نمایش داده نشد",
+        not any(c[:50] in card for c in prof.comments if fallback._is_question(c)),
+    )
+    check(
+        "پیام‌های اطلاع‌رسانی/ثبت‌نام نقل‌قول نشده‌اند",
+        "کد ارائه" not in card and "ترم تحصیلی" not in card and "#لینک" not in card,
+    )
     check("لینک یا شناسه در کارت نظرها نیست", "t.me/" not in card and "@" not in card)
     check("درس این ترم اضافه شد", "مبانی کارآفرینی" in card)
 
@@ -254,91 +311,121 @@ def test_fallback():
 
     # سنجش پاسخ سریع روی همان پرسش‌های مجموعه‌ی طلایی مدل.
     from retrieval import normalize
+
     with open("eval/golden.json", encoding="utf-8") as handle:
         golden = json.load(handle)["items"]
     fast_results = [(case, fallback.answer(store, case["query"]) or "") for case in golden]
-    uncovered = [case["id"] for case, text in fast_results
-                 if not text or any(normalize(entity) not in normalize(text)
-                                    for entity in case["entities"])]
-    check("حالت سریع برای پرسش‌های طلایی پاسخ مرتبط دارد",
-          not uncovered, str(uncovered))
-    check("حالت سریع هر ۱۰ سناریوی مقایسه/استاد/درس را پوشش می‌دهد",
-          len(fast_results) == len(golden) and all(text for _, text in fast_results),
-          f"{sum(bool(text) for _, text in fast_results)}/{len(golden)}")
+    uncovered = [
+        case["id"]
+        for case, text in fast_results
+        if not text or any(normalize(entity) not in normalize(text) for entity in case["entities"])
+    ]
+    check("حالت سریع برای پرسش‌های طلایی پاسخ مرتبط دارد", not uncovered, str(uncovered))
+    check(
+        "حالت سریع هر ۱۰ سناریوی مقایسه/استاد/درس را پوشش می‌دهد",
+        len(fast_results) == len(golden) and all(text for _, text in fast_results),
+        f"{sum(bool(text) for _, text in fast_results)}/{len(golden)}",
+    )
     experience = fallback.answer(store, "کسی تجربه‌ای از منصف داره؟") or ""
-    check("«تجربه‌ای از منصف» با استادهای تصادفی مقایسه نمی‌شود",
-          experience.startswith("👤 مرجان منصف") and "⚖️ مقایسه" not in experience)
+    check(
+        "«تجربه‌ای از منصف» با استادهای تصادفی مقایسه نمی‌شود",
+        experience.startswith("👤 مرجان منصف") and "⚖️ مقایسه" not in experience,
+    )
     schedule = fallback.answer(store, "ساختمان داده با همامی چه ساعتیه؟") or ""
-    check("سوال ساعت کلاس، فقط فهرست ارائه‌ها را می‌دهد",
-          schedule.startswith("📚") and "💬 نظرهای واقعی" not in schedule)
+    check(
+        "سوال ساعت کلاس، فقط فهرست ارائه‌ها را می‌دهد",
+        schedule.startswith("📚") and "💬 نظرهای واقعی" not in schedule,
+    )
     class_list = fallback.answer(store, "کلاسهای غلامیان این ترم کدوماست؟") or ""
-    check("درخواست فهرست کلاس استاد، پاسخ را به کلاس‌ها محدود می‌کند",
-          class_list.startswith("📚") and "💬 نظرهای واقعی" not in class_list)
+    check(
+        "درخواست فهرست کلاس استاد، پاسخ را به کلاس‌ها محدود می‌کند",
+        class_list.startswith("📚") and "💬 نظرهای واقعی" not in class_list,
+    )
     professor_misses = []
     for teacher in store.professors:
         query = f"استاد {teacher.name.split()[-1]} چطوره؟"
         answer_text = fallback.answer(store, query) or ""
         if normalize(teacher.name) not in normalize(answer_text):
             professor_misses.append(teacher.name)
-    check("آزمون پرسش استاد برای هر ۳۵ شناسنامه",
-          not professor_misses, str(professor_misses[:5]))
+    check("آزمون پرسش استاد برای هر ۳۵ شناسنامه", not professor_misses, str(professor_misses[:5]))
     course_misses = []
-    for course_name in dict.fromkeys(str(x).strip() for x in store.courses["نام درس"]
-                                     if str(x).strip()):
+    for course_name in dict.fromkeys(
+        str(x).strip() for x in store.courses["نام درس"] if str(x).strip()
+    ):
         answer_text = fallback.answer(store, f"{course_name} چه زمانی ارائه شده؟") or ""
         if normalize(course_name) not in normalize(answer_text):
             course_misses.append(course_name)
-    check("آزمون زمان‌بندی برای هر ۴۰ نام درس",
-          not course_misses, str(course_misses[:5]))
+    check("آزمون زمان‌بندی برای هر ۴۰ نام درس", not course_misses, str(course_misses[:5]))
 
     # --- استاد + درس: فقط ارائه‌های همان درس
     both = fallback.answer(store, "ساختمان داده و الگوریتم ها با همامی چه زمانی ارائه شده؟")
-    check("پرسش استاد+درس فقط همان درس را می‌آورد",
-          both and "ساختمان داده" in both and "اصول سیستم" not in both, str(both)[:120])
-    check("سوال زمان‌بندی پاسخ کوتاه و ویژه‌ی کلاس می‌گیرد",
-          both and both.startswith("📚") and "ساختمان داده" in both)
-    check("سوال صرفاً زمان‌بندی نقل‌قول‌های استادشناسی نمی‌آورد",
-          both and "💬 نظرهای واقعی" not in both)
+    check(
+        "پرسش استاد+درس فقط همان درس را می‌آورد",
+        both and "ساختمان داده" in both and "اصول سیستم" not in both,
+        str(both)[:120],
+    )
+    check(
+        "سوال زمان‌بندی پاسخ کوتاه و ویژه‌ی کلاس می‌گیرد",
+        both and both.startswith("📚") and "ساختمان داده" in both,
+    )
+    check("سوال صرفاً زمان‌بندی نقل‌قول‌های استادشناسی نمی‌آورد", both and "💬 نظرهای واقعی" not in both)
 
     # --- نام کوتاه/متفاوت درس در پرسش مجاز بودن
     alias = fallback.answer(store, "داده کاوی برای ورودی ۱۴۰۱")
-    check("نام کوتاه درس با قوانین تطبیق خورد",
-          alias and "مقدمه ای بر داده کاوی" in alias and "مجاز است" in alias, str(alias)[:120])
+    check(
+        "نام کوتاه درس با قوانین تطبیق خورد",
+        alias and "مقدمه ای بر داده کاوی" in alias and "مجاز است" in alias,
+        str(alias)[:120],
+    )
 
     # --- پرسش کاملاً بی‌ربط: پاسخ صریح، نه سکوت و نه درس اشتباه
     miss = fallback.answer(store, "تحقیق در عملیات ۱۴۰۴")
-    check("درس ناموجود ⇒ پاسخ «پیدا نکردم»",
-          miss and "پیدا نکردم" in miss and "روش تحقیق" not in miss, str(miss)[:120])
+    check(
+        "درس ناموجود ⇒ پاسخ «پیدا نکردم»",
+        miss and "پیدا نکردم" in miss and "روش تحقیق" not in miss,
+        str(miss)[:120],
+    )
     check("ارقام پرسش در پاسخ فارسی شد", miss and "۱۴۰۴" in miss, str(miss)[:80])
 
     # --- مقایسه‌ی دو استاد (پرسش «فلانی یا فلانی؟»)
     cmp = fallback.answer(store, "غلامیان یا تهرانیان؟")
     check("پرسش مقایسه ⇒ پاسخ مقایسه‌ای", cmp and cmp.startswith("⚖️"), str(cmp)[:80])
     check("مقایسه به نتیجه می‌رسد", cmp and "🎯 نتیجه:" in cmp and "غلامیان" in cmp)
-    check("ترتیب پرسش در مقایسه حفظ شد",
-          cmp and cmp.index("محمد غلامیان") < cmp.index("ابوالفضل تهرانیان"), str(cmp)[:120])
-    check("مقایسه رأی مستقیم آرشیو را نشان می‌دهد",
-          cmp and "مقایسه‌های مستقیم" in cmp, str(cmp)[:200])
+    check(
+        "ترتیب پرسش در مقایسه حفظ شد",
+        cmp and cmp.index("محمد غلامیان") < cmp.index("ابوالفضل تهرانیان"),
+        str(cmp)[:120],
+    )
+    check(
+        "مقایسه رأی مستقیم آرشیو را نشان می‌دهد", cmp and "مقایسه‌های مستقیم" in cmp, str(cmp)[:200]
+    )
     # مقایسه هم باید نظر واقعیِ پالایش‌شده‌ی هر استاد را به‌عنوان شاهد نشان دهد.
-    check("مقایسه نقل‌قول واقعی را به‌عنوان شاهد می‌آورد",
-          "💬 “" in cmp and "عین متن" not in cmp, str(cmp)[-500:])
-    check("مقایسه نقل‌قول را کوتاه نگه می‌دارد",
-          all(len(line) <= 240 for line in cmp.splitlines() if "💬 “" in line))
+    check(
+        "مقایسه نقل‌قول واقعی را به‌عنوان شاهد می‌آورد",
+        "💬 “" in cmp and "عین متن" not in cmp,
+        str(cmp)[-500:],
+    )
+    check(
+        "مقایسه نقل‌قول را کوتاه نگه می‌دارد",
+        all(len(line) <= 240 for line in cmp.splitlines() if "💬 “" in line),
+    )
 
     # --- وقتی فقط یکی از دو استاد داده دارد، صریح گفته می‌شود
     uneven = fallback.answer(store, "همامی یا رحیم")
-    check("مقایسه‌ی نامتوازن صادق است",
-          uneven and "ارزیابی روشنی نیست" in uneven, str(uneven)[:160])
+    check("مقایسه‌ی نامتوازن صادق است", uneven and "ارزیابی روشنی نیست" in uneven, str(uneven)[:160])
 
     # --- نسبت‌دادن هر بند پیام به استاد خودش (نه به صاحب شناسنامه)
     keys = fallback._name_keys(store)
     mixed = fallback._attributed(
         "غلامیان درست تر نمره میده ولی تهرانیان تاس میندازه",
-        keys, "سهیلا دهقان چناری",
+        keys,
+        "سهیلا دهقان چناری",
     )
-    check("بند مثبت به غلامیان و بند منفی به تهرانیان رسید",
-          mixed.get("محمد غلامیان", 0) > 0 and mixed.get("ابوالفضل تهرانیان", 0) < 0,
-          str(mixed))
+    check(
+        "بند مثبت به غلامیان و بند منفی به تهرانیان رسید",
+        mixed.get("محمد غلامیان", 0) > 0 and mixed.get("ابوالفضل تهرانیان", 0) < 0,
+        str(mixed),
+    )
 
     # --- نگهبان ضدتوهم با خروجی واقعی gemma3:4b (تست رگرسیون)
     ctx_time, _ = store.build_context(
@@ -362,13 +449,15 @@ def test_fallback():
     check("خلاصه‌ی درست رد نشد", ok)
 
     # پاکسازی خروجی مدل
-    check("حکم بی‌ربط مدل حذف شد",
-          "نتیجه" not in fallback.sanitize_model_text("نتیجه: مجاز است"))
-    check("حکم مرتبط مدل حفظ شد",
-          "نتیجه" in fallback.sanitize_model_text("نتیجه: مجاز است", allow_verdict=True))
+    check("حکم بی‌ربط مدل حذف شد", "نتیجه" not in fallback.sanitize_model_text("نتیجه: مجاز است"))
+    check(
+        "حکم مرتبط مدل حفظ شد",
+        "نتیجه" in fallback.sanitize_model_text("نتیجه: مجاز است", allow_verdict=True),
+    )
 
 
 # ---------------------------------------------------------------- 4) end-to-end
+
 
 class FakeChat:
     type = "private"
@@ -440,13 +529,18 @@ def test_end_to_end():
     msg_fast = FakeMessage("استاد آذر ابوالقاسمی چطور استادی هستن")
     asyncio.run(bot.handle_message(types.SimpleNamespace(message=msg_fast), ctx_fast))
     check("پیش‌فرض: مدل صدا زده نشد", called["n"] == 0, str(called))
-    check("پیش‌فرض: پاسخ قطعی فوری رسید",
-          "ارفاق" in msg_fast.answers[-1] and "جمع‌بندی مدل" not in msg_fast.answers[-1])
+    check(
+        "پیش‌فرض: پاسخ قطعی فوری رسید",
+        "ارفاق" in msg_fast.answers[-1] and "جمع‌بندی مدل" not in msg_fast.answers[-1],
+    )
 
     msg_unknown = FakeMessage("سیب زمینی چند؟")
     asyncio.run(bot.handle_message(types.SimpleNamespace(message=msg_unknown), ctx_fast))
-    check("پیش‌فرض: سوال بی‌ربط پاسخ صریح «پیدا نشد» گرفت (بدون معطلی مدل)",
-          "پیدا نکردم" in msg_unknown.answers[-1], msg_unknown.answers[-1][:60])
+    check(
+        "پیش‌فرض: سوال بی‌ربط پاسخ صریح «پیدا نشد» گرفت (بدون معطلی مدل)",
+        "پیدا نکردم" in msg_unknown.answers[-1],
+        msg_unknown.answers[-1][:60],
+    )
     check("پیش‌فرض: مدل حتی برای سوال بی‌ربط صدا زده نشد", called["n"] == 0, str(called))
 
     # --- حالت با مدل
@@ -486,15 +580,22 @@ def test_end_to_end():
     llm.generate = lambda *a, **kw: (_ for _ in ()).throw(llm.LLMError("Ollama قطع است"))
     asyncio.run(bot.handle_message(types.SimpleNamespace(message=msg2), context))
     off = msg2.answers[-1]
-    check("بدون مدل، پاسخ از داده‌های پروژه ساخته شد", "ایزدیخواه" in off and "ارائه‌ی این ترم" in off, off[:80])
+    check(
+        "بدون مدل، پاسخ از داده‌های پروژه ساخته شد",
+        "ایزدیخواه" in off and "ارائه‌ی این ترم" in off,
+        off[:80],
+    )
     check("به کاربر گفته شد که مدل نبود", "مدل محلی در دسترس نبود" in off)
     check("پاسخ کوتاه و قابل ارسال است", len(off) < 4000, str(len(off)))
 
     # خطای مدل و سوال بی‌ربط ⇒ پیام راهنما (نه سکوت)
     msg5 = FakeMessage("سیب زمینی چند؟")
     asyncio.run(bot.handle_message(types.SimpleNamespace(message=msg5), context))
-    check("سوال بی‌ربط بدون مدل پاسخ صریح گرفت",
-          msg5.answers and "پیدا نکردم" in msg5.answers[-1], str(msg5.answers))
+    check(
+        "سوال بی‌ربط بدون مدل پاسخ صریح گرفت",
+        msg5.answers and "پیدا نکردم" in msg5.answers[-1],
+        str(msg5.answers),
+    )
 
     # در گروه، بدون منشن و بدون ریپلای، جواب نمی‌دهد
     msg3 = FakeMessage("سلام بچه‌ها")
@@ -510,8 +611,8 @@ def test_end_to_end():
     check("در گروه با منشن جواب می‌دهد", msg4.answers == ["سلام 👋"], str(msg4.sent))
 
 
-
 # ---------------------------------------------------------------- 3.7) حالت مدل
+
 
 class FakeCallbackQuery:
     """همان چیزی که تلگرام هنگام کلیک دکمه می‌دهد."""
@@ -532,9 +633,7 @@ class FakeCallbackQuery:
 
 def test_deep_mode():
     print("\n[۳.۷] حالت تحلیل با مدل (deep)")
-    import asyncio
     import time
-    import types
 
     import deep
     import llm
@@ -544,20 +643,24 @@ def test_deep_mode():
 
     # --- زمینه: متن کامل، نه زمینه‌ی بریده‌ی ۴۰۰۰ کاراکتری
     ctx, meta = deep.build_deep_context(store, "غلامیان یا تهرانیان؟")
-    check("زمینه‌ی حالت مدل هر دو استاد را دارد",
-          "محمد غلامیان" in ctx and "ابوالفضل تهرانیان" in ctx, str(meta))
+    check(
+        "زمینه‌ی حالت مدل هر دو استاد را دارد",
+        "محمد غلامیان" in ctx and "ابوالفضل تهرانیان" in ctx,
+        str(meta),
+    )
     check("خلاصه‌ی عددی قابل استناد هست", "نظر مثبت:" in ctx and "نظر منفی:" in ctx)
     gholamian = next(x for x in store.professors if "غلامیان" in x.norm_name)
     longest = max(gholamian.comments, key=len)
-    check("متن کامل نظرها (بدون بریدن ۹۰۰ کاراکتری) رسیده",
-          longest[:80] in ctx, longest[:60])
+    check("متن کامل نظرها (بدون بریدن ۹۰۰ کاراکتری) رسیده", longest[:80] in ctx, longest[:60])
     check("ردیف‌های درس این ترم هم هست", "مبانی آنالیز عددی" in ctx)
 
     # --- اعتبارسنجی تحلیل
-    good = ("نتیجه: بین این دو، غلامیان انتخاب کم‌ریسک‌تری است.\n"
-            "• چند نفر می‌گویند درست‌تر نمره می‌دهد.\n"
-            "• تهرانیان به شانسی‌بودن سوال‌ها متهم شده.\n"
-            "• هر دو نقد جدی گرفته‌اند؛ برای تصمیم نهایی ساعت کلاس را ببین.")
+    good = (
+        "نتیجه: بین این دو، غلامیان انتخاب کم‌ریسک‌تری است.\n"
+        "• چند نفر می‌گویند درست‌تر نمره می‌دهد.\n"
+        "• تهرانیان به شانسی‌بودن سوال‌ها متهم شده.\n"
+        "• هر دو نقد جدی گرفته‌اند؛ برای تصمیم نهایی ساعت کلاس را ببین."
+    )
     ok, why = deep.verify_analysis_text(good, ctx)
     check("تحلیل معتبر پذیرفته شد", ok, why)
 
@@ -574,7 +677,8 @@ def test_deep_mode():
 
     # در اجرای واقعی مدل «آذرaboالقاسمی» تولید کرد ⇒ خروجی مخدوش پذیرفته نشود
     mixed_script, why = deep.verify_analysis_text(
-        "استاد آذرaboالقاسمی خوب استادی هست و نمره‌دهی دست بازی دارد.", ctx)
+        "استاد آذرaboالقاسمی خوب استادی هست و نمره‌دهی دست بازی دارد.", ctx
+    )
     check("خروجی مخدوش (لاتین وسط فارسی) رد شد", not mixed_script and "abo" in why, why)
 
     # --- اجرا با مدل جعلی
@@ -583,8 +687,11 @@ def test_deep_mode():
         llm.generate = lambda messages, **kw: good
         result = deep.analyze(store, "غلامیان یا تهرانیان؟")
         check("تحلیل مدل با موفقیت ساخته شد", result["ok"], result["reason"])
-        check("زمینه‌ی کامل به مدل داده شد (num_ctx بزرگ‌تر)",
-              result["meta"]["chars"] > 2000, str(result["meta"]))
+        check(
+            "زمینه‌ی کامل به مدل داده شد (num_ctx بزرگ‌تر)",
+            result["meta"]["chars"] > 2000,
+            str(result["meta"]),
+        )
 
         llm.generate = lambda messages, **kw: "کلاس او شنبه ۲۱:۴۵ است."
         result = deep.analyze(store, "استاد غلامیان")
@@ -595,13 +702,19 @@ def test_deep_mode():
 
         llm.generate = boom
         result = deep.analyze(store, "استاد غلامیان")
-        check("خطای مدل در تحلیل مدیریت شد",
-              not result["ok"] and result["model_failed"], str(result["reason"]))
+        check(
+            "خطای مدل در تحلیل مدیریت شد",
+            not result["ok"] and result["model_failed"],
+            str(result["reason"]),
+        )
 
         llm.generate = lambda messages, **kw: "نتیجه"
         result = deep.analyze(store, "سیب زمینی چند؟")
-        check("پرسش بی‌داده بدون صدا زدن مدل رد شد",
-              not result["ok"] and not result["model_failed"], result["reason"])
+        check(
+            "پرسش بی‌داده بدون صدا زدن مدل رد شد",
+            not result["ok"] and not result["model_failed"],
+            result["reason"],
+        )
     finally:
         llm.generate = original
 
@@ -610,14 +723,20 @@ def test_deep_mode():
 
     token = bot.remember_query("غلامیان یا تهرانیان؟", 7)
     check("توکن دکمه کوتاه است (سقف ۶۴ بایت تلگرام)", len(token) == 8)
-    check("دکمه‌ی معتبر بازیابی شد", bot.recall_query(token)["query"].startswith("غلامیان"))
-    check("دکمه یک‌بار مصرف است", bot.recall_query(token) is None)
+    check("توکن کاربر دیگر به کلیک‌کننده تحویل نمی‌شود", bot.recall_query(token, 8) is None)
+    check("تلاش غیرمجاز توکن مالک را نمی‌سوزاند", token in bot.PENDING)
+    check(
+        "دکمه‌ی معتبر فقط به مالک پرسش می‌رسد",
+        bot.recall_query(token, 7)["query"].startswith("غلامیان"),
+    )
+    check("دکمه یک‌بار مصرف است", bot.recall_query(token, 7) is None)
     token2 = bot.remember_query("سوال قدیمی")
     bot.PENDING[token2]["ts"] = time.time() - bot.PENDING_TTL - 5
     check("دکمه‌ی منقضی بازیابی نمی‌شود", bot.recall_query(token2) is None)
 
 
 # ---------------------------------------------------------------- 4) مسیر حالت مدل در تلگرام
+
 
 def test_deep_end_to_end():
     print("\n[۴.۱] مسیر تلگرامِ حالت مدل (دکمه و /deep)")
@@ -645,9 +764,9 @@ def test_deep_end_to_end():
             self.edited = text
             return FakePlaceholder(text)
 
-    analysis = ("نتیجه: غلامیان انتخاب کم‌ریسک‌تری است.\n"
-                "• درست‌تر نمره می‌دهد.\n"
-                "• تهرانیان بیشتر نقد شده است.")
+    analysis = (
+        "نتیجه: غلامیان انتخاب کم‌ریسک‌تری است.\n• درست‌تر نمره می‌دهد.\n• تهرانیان بیشتر نقد شده است."
+    )
     import tempfile
 
     import api_llm
@@ -684,13 +803,32 @@ def test_deep_end_to_end():
         cq = FakeCallbackQuery(button.callback_data)
         asyncio.run(bot.deep_callback(types.SimpleNamespace(callback_query=cq), ctx))
         check("به کلیک دکمه پاسخ داده شد", cq.answered == 1)
-        check("پیام اول به «در حال تحلیل» تغییر کرد",
-              len(cq.edits) == 2 and "در حال تحلیل" in cq.edits[0], str(cq.edits[:1]))
+        check(
+            "پیام اول به «در حال تحلیل» تغییر کرد",
+            len(cq.edits) == 2 and "در حال تحلیل" in cq.edits[0],
+            str(cq.edits[:1]),
+        )
         check("تحلیل مدل جایگزین شد", "🧠 تحلیل مدل" in cq.edits[-1], cq.edits[-1][:60])
         check("خروجی، فهم مدل است نه فهرست داده", "کم‌ریسک‌تری" in cq.edits[-1])
         check("داده‌ی پایه برای شفافیت ضمیمه شد", "📊 داده‌ی پایه" in cq.edits[-1])
-        check("حکم محاسبه‌شده از داده هم زیر تحلیل مدل می‌آید",
-              "🎯 حکم داده (بدون مدل)" in cq.edits[-1], cq.edits[-1][-160:])
+        check(
+            "حکم محاسبه‌شده از داده هم زیر تحلیل مدل می‌آید",
+            "🎯 حکم داده (بدون مدل)" in cq.edits[-1],
+            cq.edits[-1][-160:],
+        )
+
+        # دکمه در گروه نباید برای کاربر دیگری قابل مصرف باشد.
+        owner_token = bot.remember_query("غلامیان یا تهرانیان؟", 7)
+        cq_other = FakeCallbackQuery(f"deep:{owner_token}")
+        cq_other.from_user = types.SimpleNamespace(id=8)
+        asyncio.run(bot.deep_callback(types.SimpleNamespace(callback_query=cq_other), ctx))
+        check(
+            "کلیک‌کننده‌ی غیرمالک از تحلیل منع شد",
+            "کاربر دیگری" in cq_other.edits[-1],
+            cq_other.edits[-1],
+        )
+        check("کلیک غیرمجاز توکن مالک را حفظ کرد", owner_token in bot.PENDING)
+        bot.recall_query(owner_token, 7)
 
         # ۳) ضربه‌ی دوم روی همان دکمه ⇒ منقضی، نه تحلیل دوباره
         cq2 = FakeCallbackQuery(button.callback_data)
@@ -699,14 +837,20 @@ def test_deep_end_to_end():
 
         # ۴) دستور /deep
         msg_cmd = KeyedMessage("/deep غلامیان یا تهرانیان؟")
-        asyncio.run(bot.deep_command(
-            types.SimpleNamespace(message=msg_cmd),
-            types.SimpleNamespace(args=["غلامیان", "یا", "تهرانیان؟"],
-                                  bot=types.SimpleNamespace(id=1, username="b")),
-        ))
-        check("/deep مستقیم تحلیل می‌دهد",
-              "🧠 تحلیل مدل" in msg_cmd.placeholders[-1].text,
-              msg_cmd.placeholders[-1].text[:60])
+        asyncio.run(
+            bot.deep_command(
+                types.SimpleNamespace(message=msg_cmd),
+                types.SimpleNamespace(
+                    args=["غلامیان", "یا", "تهرانیان؟"],
+                    bot=types.SimpleNamespace(id=1, username="b"),
+                ),
+            )
+        )
+        check(
+            "/deep مستقیم تحلیل می‌دهد",
+            "🧠 تحلیل مدل" in msg_cmd.placeholders[-1].text,
+            msg_cmd.placeholders[-1].text[:60],
+        )
 
         # ۵) مدل خطا داد ⇒ صادقانه + پاسخ معتبر داده
         def boom(*a, **kw):
@@ -716,8 +860,7 @@ def test_deep_end_to_end():
         token = bot.remember_query("غلامیان یا تهرانیان؟")
         cq3 = FakeCallbackQuery(f"deep:{token}")
         asyncio.run(bot.deep_callback(types.SimpleNamespace(callback_query=cq3), ctx))
-        check("خطای مدل صادقانه گفته شد", "مدل در دسترس نبود" in cq3.edits[-1],
-              cq3.edits[-1][:80])
+        check("خطای مدل صادقانه گفته شد", "مدل در دسترس نبود" in cq3.edits[-1], cq3.edits[-1][:80])
         check("پاسخ معتبر داده در همان پیام ماند", "⚖️" in cq3.edits[-1])
 
         # ۶) حالت مدل خاموش ⇒ دکمه نباید بیاید
@@ -725,19 +868,27 @@ def test_deep_end_to_end():
         bot.MODEL_READY = False
         msg_nb = KeyedMessage("استاد ابوالقاسمی")
         asyncio.run(bot.handle_message(types.SimpleNamespace(message=msg_nb), ctx))
-        check("بدون مدل، دکمه نمایش داده نمی‌شود",
-              msg_nb.placeholders[-1].kwargs.get("reply_markup") is None)
+        check(
+            "بدون مدل، دکمه نمایش داده نمی‌شود",
+            msg_nb.placeholders[-1].kwargs.get("reply_markup") is None,
+        )
 
         # ۷) /deep بدون مدل ⇒ پاسخ سریع با توضیح
         msg_off = KeyedMessage("/deep استاد ابوالقاسمی")
-        asyncio.run(bot.deep_command(
-            types.SimpleNamespace(message=msg_off),
-            types.SimpleNamespace(args=["استاد", "ابوالقاسمی"],
-                                  bot=types.SimpleNamespace(id=1, username="b")),
-        ))
+        asyncio.run(
+            bot.deep_command(
+                types.SimpleNamespace(message=msg_off),
+                types.SimpleNamespace(
+                    args=["استاد", "ابوالقاسمی"], bot=types.SimpleNamespace(id=1, username="b")
+                ),
+            )
+        )
         off_text = msg_off.placeholders[-1].text
-        check("‎/deep بدون مدل پاسخ سریع می‌دهد",
-              "حالت مدل روی این اجرا فعال نیست" in off_text, off_text[:60])
+        check(
+            "‎/deep بدون مدل پاسخ سریع می‌دهد",
+            "حالت مدل روی این اجرا فعال نیست" in off_text,
+            off_text[:60],
+        )
 
         # ۸) مدل خاموش ولی API روشن ⇒ فقط دکمه‌ی ⚡ (بدون مدل هم API کار می‌کند)
         api_llm.API_KEY = "test-key"
@@ -745,9 +896,11 @@ def test_deep_end_to_end():
         asyncio.run(bot.handle_message(types.SimpleNamespace(message=msg_api_only), ctx))
         only = msg_api_only.placeholders[-1].kwargs.get("reply_markup")
         rows = only.inline_keyboard if only else []
-        check("مدل خاموش + API روشن ⇒ فقط دکمه‌ی API",
-              len(rows) == 1 and rows[0][0].callback_data.startswith("api:"),
-              str([[b.text for b in row] for row in rows]))
+        check(
+            "مدل خاموش + API روشن ⇒ فقط دکمه‌ی API",
+            len(rows) == 1 and rows[0][0].callback_data.startswith("api:"),
+            str([[b.text for b in row] for row in rows]),
+        )
         api_llm.API_KEY = ""
         check("‎/deep بدون مدل داده را هم می‌آورد", "ابوالقاسمی" in off_text)
     finally:
@@ -757,8 +910,8 @@ def test_deep_end_to_end():
         bot.MODEL_READY = old_model_ready
 
 
-
 # ---------------------------------------------------------------- 5) گردش‌کارها
+
 
 def test_workflows():
     print("\n[۵] گردش‌کارهای Actions (بدون دانلود تکراری مدل)")
@@ -766,23 +919,27 @@ def test_workflows():
 
     yml = pathlib.Path(".github/workflows/bot.yml").read_text(encoding="utf-8")
     check("کش مدل با کلید ثابت تعریف شده", "steps.model_key.outputs.key" in yml)
-    check("کش قدیمی هم بازیابی می‌شود (بدون دانلود دوباره)",
-          "restore-keys" in yml and "ollama-" in yml)
-    check("پیش از دانلود، وجود مدل بررسی می‌شود",
-          'grep -qx "$MODEL_NAME"' in yml)
-    check("شکست مدل، job را نمی‌کشد (ربات در حالت سریع بالا می‌آید)",
-          yml.count("continue-on-error: true") >= 2)
+    check(
+        "کش قدیمی هم بازیابی می‌شود (بدون دانلود دوباره)", "restore-keys" in yml and "ollama-" in yml
+    )
+    check("پیش از دانلود، وجود مدل بررسی می‌شود", 'grep -qx "$MODEL_NAME"' in yml)
+    check(
+        "شکست مدل، job را نمی‌کشد (ربات در حالت سریع بالا می‌آید)",
+        yml.count("continue-on-error: true") >= 2,
+    )
     check("کش مدل از کلیدهای ساده‌ی تازه استفاده می‌کند", "-v3" in yml)
-    check("نصب مدل فقط وقتی حالت مدل روشن است",
-          "env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'" in yml)
+    check(
+        "نصب مدل فقط وقتی حالت مدل روشن است",
+        "env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'" in yml,
+    )
 
     for name in ("model-check.yml", "deep-check.yml"):
         text = pathlib.Path(f".github/workflows/{name}").read_text(encoding="utf-8")
-        check(f"{name}: دانلود فقط در صورت نبودن مدل",
-              'grep -qx "$MODEL_NAME"' in text)
+        check(f"{name}: دانلود فقط در صورت نبودن مدل", 'grep -qx "$MODEL_NAME"' in text)
 
 
 # ---------------------------------------------------------------- 3.8) سهمیه و API
+
 
 class FakeOpenAI(BaseHTTPRequestHandler):
     """سرور جعلی سازگار با OpenAI (همان چیزی که OpenRouter برمی‌گرداند)."""
@@ -811,14 +968,21 @@ class FakeOpenAI(BaseHTTPRequestHandler):
             return self._send(401, {"error": {"message": "invalid key"}})
         if FakeOpenAI.mode == "empty":
             return self._send(200, {"choices": []})
-        return self._send(200, {
-            "model": body.get("model"),
-            "choices": [{"message": {
-                "role": "assistant",
-                "content": "نتیجه: غلامیان انتخاب کم‌ریسک‌تری است برای این درس.",
-            }}],
-            "usage": {"prompt_tokens": 120, "completion_tokens": 30},
-        })
+        return self._send(
+            200,
+            {
+                "model": body.get("model"),
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "نتیجه: غلامیان انتخاب کم‌ریسک‌تری است برای این درس.",
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 120, "completion_tokens": 30},
+            },
+        )
 
 
 def test_api_provider():
@@ -834,19 +998,25 @@ def test_api_provider():
     api_llm.API_KEY = "test-key"
     api_llm.API_MODEL = "test/model-1"
     try:
-        check("شناسه‌ی پیش‌فرض OpenRouter معتبر است",
-              "qwen-2.5-72b-instruct" in old[2])
+        check("شناسه‌ی پیش‌فرض OpenRouter معتبر است", "qwen-2.5-72b-instruct" in old[2])
         check("با کلید، API فعال است", api_llm.enabled())
 
         text = api_llm.generate([{"role": "user", "content": "سلام"}])
         check("پاسخ API دریافت شد", "غلامیان" in text, text[:60])
-        check("کلید در هدر Authorization رفت",
-              FakeOpenAI.last_auth == "Bearer test-key", str(FakeOpenAI.last_auth))
-        check("مدل در درخواست ارسال شد",
-              (FakeOpenAI.last_body or {}).get("model") == "test/model-1")
-        check("آمار مصرف ثبت شد",
-              api_llm.LAST_STATS.get("provider") == "api"
-              and api_llm.LAST_STATS.get("eval_count") == 30, str(api_llm.LAST_STATS))
+        check(
+            "کلید در هدر Authorization رفت",
+            FakeOpenAI.last_auth == "Bearer test-key",
+            str(FakeOpenAI.last_auth),
+        )
+        check(
+            "مدل در درخواست ارسال شد", (FakeOpenAI.last_body or {}).get("model") == "test/model-1"
+        )
+        check(
+            "آمار مصرف ثبت شد",
+            api_llm.LAST_STATS.get("provider") == "api"
+            and api_llm.LAST_STATS.get("eval_count") == 30,
+            str(api_llm.LAST_STATS),
+        )
 
         FakeOpenAI.mode = "401"
         try:
@@ -884,8 +1054,11 @@ def test_api_provider():
 
         FakeOpenAI.mode = "401"
         failed = deep.analyze(store, "غلامیان یا تهرانیان؟", provider="api")
-        check("خطای API به شکست مدل تبدیل شد",
-              not failed["ok"] and failed["model_failed"], failed["reason"])
+        check(
+            "خطای API به شکست مدل تبدیل شد",
+            not failed["ok"] and failed["model_failed"],
+            failed["reason"],
+        )
         FakeOpenAI.mode = "ok"
     finally:
         api_llm.API_BASE_URL, api_llm.API_KEY, api_llm.API_MODEL = old
@@ -905,8 +1078,10 @@ def test_quota():
 
         check("سقف پیش‌فرض: مدل ۳ بار", quota.LIMITS["deep"] == 3)
         check("سقف پیش‌فرض: API ۱ بار", quota.LIMITS["api"] == 1)
-        check("کاربر تازه کل سهمیه را دارد",
-              store.remaining(11, "deep") == 3 and store.remaining(11, "api") == 1)
+        check(
+            "کاربر تازه کل سهمیه را دارد",
+            store.remaining(11, "deep") == 3 and store.remaining(11, "api") == 1,
+        )
 
         check("مصرف مدل ۱", store.consume(11, "deep"))
         check("مصرف مدل ۲", store.consume(11, "deep"))
@@ -923,8 +1098,10 @@ def test_quota():
         check("برگشت سهمیه بعد از خطا", store.remaining(11, "deep") == 1)
 
         reloaded = quota.QuotaStore(path=path, persist_remote=False)
-        check("سهمیه روی دیسک ماند", reloaded.remaining(11, "deep") == 1
-              and reloaded.remaining(11, "api") == 0)
+        check(
+            "سهمیه روی دیسک ماند",
+            reloaded.remaining(11, "deep") == 1 and reloaded.remaining(11, "api") == 0,
+        )
 
         # گذشت روز ⇒ سهمیه‌ی تازه
         original_today = quota.today_key
@@ -962,16 +1139,19 @@ def test_quota():
             remote = FakeRemote({today: {"33": {"deep": 2}}})
             store = quota.QuotaStore(path=path, remote=remote, persist_remote=True)
             store.sync()
-            check("سهمیه‌ی گیت‌هاب خوانده شد", store.remaining(33, "deep") == 1,
-                  str(store.remaining(33, "deep")))
+            check(
+                "سهمیه‌ی گیت‌هاب خوانده شد",
+                store.remaining(33, "deep") == 1,
+                str(store.remaining(33, "deep")),
+            )
             store.consume(33, "deep")
-            check("شمارنده‌ی محلی جلوتر از ریموت نگه داشته می‌شود",
-                  store.remaining(33, "deep") == 0)
+            check("شمارنده‌ی محلی جلوتر از ریموت نگه داشته می‌شود", store.remaining(33, "deep") == 0)
         finally:
             quota.PERSIST = old_persist
 
 
 # ---------------------------------------------------------------- 3.95) سهمیه در ربات
+
 
 def test_rate_limits_in_bot():
     print("\n[۳.۹۵] دکمه‌ها و سهمیه در ربات")
@@ -979,8 +1159,8 @@ def test_rate_limits_in_bot():
     import tempfile
     import types
 
-    import EntekhabVahedBot as bot
     import api_llm
+    import EntekhabVahedBot as bot
     import llm
     import quota
 
@@ -988,40 +1168,49 @@ def test_rate_limits_in_bot():
         old_quota = bot.QUOTA
         old_api_key = api_llm.API_KEY
         old_model_ready = bot.MODEL_READY
-        bot.QUOTA = quota.QuotaStore(
-            path=os.path.join(tmp, "quotas.json"), persist_remote=False
-        )
+        bot.QUOTA = quota.QuotaStore(path=os.path.join(tmp, "quotas.json"), persist_remote=False)
         api_llm.API_KEY = "test-key"
         bot.MODEL_READY = True
         try:
             markup = bot.deep_keyboard("غلامیان یا تهرانیان؟", 77)
-            check("دو دکمه ساخته شد (مدل + API)", markup and len(markup.inline_keyboard) == 2,
-                  str(markup))
+            check(
+                "دو دکمه ساخته شد (مدل + API)",
+                markup and len(markup.inline_keyboard) == 2,
+                str(markup),
+            )
             deep_label = markup.inline_keyboard[0][0].text
             api_label = markup.inline_keyboard[1][0].text
             check("دکمه‌ی مدل سهمیه را نشان می‌دهد", "۳ از ۳" in deep_label, deep_label)
             check("دکمه‌ی API سهمیه‌ی خودش را نشان می‌دهد", "۱ از ۱" in api_label, api_label)
-            check("callback دکمه‌ها کوتاه و تفکیک‌شده‌اند",
-                  markup.inline_keyboard[0][0].callback_data.startswith("deep:")
-                  and markup.inline_keyboard[1][0].callback_data.startswith("api:")
-                  and all(len(row[0].callback_data) < 64 for row in markup.inline_keyboard))
+            check(
+                "callback دکمه‌ها کوتاه و تفکیک‌شده‌اند",
+                markup.inline_keyboard[0][0].callback_data.startswith("deep:")
+                and markup.inline_keyboard[1][0].callback_data.startswith("api:")
+                and all(len(row[0].callback_data) < 64 for row in markup.inline_keyboard),
+            )
 
             # مصرف کامل مدل ⇒ برچسب صفر
             for _ in range(3):
                 bot.QUOTA.consume(77, "deep")
             after = bot.deep_keyboard("غلامیان یا تهرانیان؟", 77)
-            check("دکمه‌ی مدل بعد از اتمام ۰ از ۳ نشان می‌دهد",
-                  "۰ از ۳" in after.inline_keyboard[0][0].text,
-                  after.inline_keyboard[0][0].text)
+            check(
+                "دکمه‌ی مدل بعد از اتمام ۰ از ۳ نشان می‌دهد",
+                "۰ از ۳" in after.inline_keyboard[0][0].text,
+                after.inline_keyboard[0][0].text,
+            )
 
             # کلیک روی دکمه‌ی بی‌سهمیه ⇒ پیام روشن
             token = bot.remember_query("غلامیان یا تهرانیان؟", 77)
             cq = FakeCallbackQuery(f"deep:{token}")
             cq.from_user = types.SimpleNamespace(id=77)
-            asyncio.run(bot.deep_callback(types.SimpleNamespace(callback_query=cq),
-                                          types.SimpleNamespace()))
-            check("سهمیه‌ی تمام‌شده با پیام روشن گفته می‌شود",
-                  "سهمیه‌ی امروزت" in cq.edits[-1], cq.edits[-1][:80])
+            asyncio.run(
+                bot.deep_callback(types.SimpleNamespace(callback_query=cq), types.SimpleNamespace())
+            )
+            check(
+                "سهمیه‌ی تمام‌شده با پیام روشن گفته می‌شود",
+                "سهمیه‌ی امروزت" in cq.edits[-1],
+                cq.edits[-1][:80],
+            )
             check("به گزینه‌ی دیگر ارجاع می‌دهد", "API" in cq.edits[-1])
 
             # سهمیه‌ی API مصرف‌شده ⇒ پیام آن هم پیام درست بدهد
@@ -1029,8 +1218,11 @@ def test_rate_limits_in_bot():
             token_api = bot.remember_query("غلامیان یا تهرانیان؟", 77)
             cq_api = FakeCallbackQuery(f"api:{token_api}")
             cq_api.from_user = types.SimpleNamespace(id=77)
-            asyncio.run(bot.api_callback(types.SimpleNamespace(callback_query=cq_api),
-                                         types.SimpleNamespace()))
+            asyncio.run(
+                bot.api_callback(
+                    types.SimpleNamespace(callback_query=cq_api), types.SimpleNamespace()
+                )
+            )
             check("سهمیه‌ی API هم گارد دارد", "سهمیه‌ی امروزت" in cq_api.edits[-1])
 
             # خطای زیرساخت ⇒ سهمیه برمی‌گردد
@@ -1042,14 +1234,21 @@ def test_rate_limits_in_bot():
 
             llm.generate = boom
             try:
-                asyncio.run(bot.run_deep(bot.STORE, "غلامیان یا تهرانیان؟",
-                                         provider="deep" if False else "local",
-                                         user_id=88))
+                asyncio.run(
+                    bot.run_deep(
+                        bot.STORE,
+                        "غلامیان یا تهرانیان؟",
+                        provider="deep" if False else "local",
+                        user_id=88,
+                    )
+                )
             finally:
                 llm.generate = original_generate
-            check("خطای مدل سهمیه را مصرف نمی‌کند",
-                  bot.QUOTA.remaining(88, "deep") == 3,
-                  str(bot.QUOTA.remaining(88, "deep")))
+            check(
+                "خطای مدل سهمیه را مصرف نمی‌کند",
+                bot.QUOTA.remaining(88, "deep") == 3,
+                str(bot.QUOTA.remaining(88, "deep")),
+            )
 
             # اجرای موفق سهمیه را کم می‌کند
             llm.generate = lambda *a, **kw: (
@@ -1058,23 +1257,25 @@ def test_rate_limits_in_bot():
                 "• تهرانیان نقد بیشتری گرفته است."
             )
             try:
-                text = asyncio.run(bot.run_deep(bot.STORE, "غلامیان یا تهرانیان؟",
-                                                provider="local", user_id=88))
+                text = asyncio.run(
+                    bot.run_deep(bot.STORE, "غلامیان یا تهرانیان؟", provider="local", user_id=88)
+                )
             finally:
                 llm.generate = original_generate
-            check("اجرای موفق یک واحد از سهمیه کم کرد",
-                  bot.QUOTA.remaining(88, "deep") == 2,
-                  str(bot.QUOTA.remaining(88, "deep")))
-            check("سهمیه‌ی باقی‌مانده در پاسخ دیده می‌شود", "سهمیه‌ی امروز" in text,
-                  text[-120:])
+            check(
+                "اجرای موفق یک واحد از سهمیه کم کرد",
+                bot.QUOTA.remaining(88, "deep") == 2,
+                str(bot.QUOTA.remaining(88, "deep")),
+            )
+            check("سهمیه‌ی باقی‌مانده در پاسخ دیده می‌شود", "سهمیه‌ی امروز" in text, text[-120:])
         finally:
             bot.QUOTA = old_quota
             api_llm.API_KEY = old_api_key
             bot.MODEL_READY = old_model_ready
 
 
-
 # ---------------------------------------------------------------- 3.96) مجموعه‌ی طلایی
+
 
 def test_golden_eval():
     print("\n[۳.۹۶] سنجش کیفیت با مجموعه‌ی طلایی")
@@ -1084,29 +1285,38 @@ def test_golden_eval():
     with open("eval/golden.json", encoding="utf-8") as handle:
         cases = json.load(handle)["items"]
     check("مجموعه‌ی طلایی خوانده شد", len(cases) >= 8, str(len(cases)))
-    check("هر مورد شناسه و پرسش دارد",
-          all(c.get("id") and c.get("query") for c in cases))
-    check("هم پرسش مقایسه‌ای دارد هم استادشناسی",
-          any(c["kind"] == "compare" for c in cases)
-          and any(c["kind"] == "prof" for c in cases))
+    check("هر مورد شناسه و پرسش دارد", all(c.get("id") and c.get("query") for c in cases))
+    check(
+        "هم پرسش مقایسه‌ای دارد هم استادشناسی",
+        any(c["kind"] == "compare" for c in cases) and any(c["kind"] == "prof" for c in cases),
+    )
 
     spec = importlib.util.spec_from_file_location("eval_deep", "scripts/eval_deep.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
-    ok_result = {"ok": True, "reason": "ok", "elapsed": 1.0,
-                 "text": "نتیجه: غلامیان بهتر است.\n• دلیل"}
-    bad_result = {"ok": True, "reason": "ok", "elapsed": 1.0,
-                  "text": "غلامیان خوب است"}
+    ok_result = {
+        "ok": True,
+        "reason": "ok",
+        "elapsed": 1.0,
+        "text": "نتیجه: غلامیان بهتر است.\n• دلیل",
+    }
+    bad_result = {"ok": True, "reason": "ok", "elapsed": 1.0, "text": "غلامیان خوب است"}
 
     case = {"id": "x", "query": "غلامیان یا تهرانیان؟", "entities": ["غلامیان"]}
     check("پاسخ درست قبول می‌شود", mod.score_case(case, ok_result)["passed"])
     check("پاسخ بدون «نتیجه:» رد می‌شود", not mod.score_case(case, bad_result)["passed"])
-    check("نبود موجودیت رد می‌شود",
-          not mod.score_case({"id": "y", "entities": ["تهرانیان"]}, ok_result)["passed"])
-    check("متن ممنوع رد می‌کند",
-          not mod.score_case({"id": "z", "entities": ["غلامیان"],
-                              "forbid": ["بهتر است"]}, ok_result)["passed"])
+    check(
+        "نبود موجودیت رد می‌شود",
+        not mod.score_case({"id": "y", "entities": ["تهرانیان"]}, ok_result)["passed"],
+    )
+    check(
+        "متن ممنوع رد می‌کند",
+        not mod.score_case({"id": "z", "entities": ["غلامیان"], "forbid": ["بهتر است"]}, ok_result)[
+            "passed"
+        ],
+    )
+
 
 def isolate_environment() -> None:
     """تست‌ها نباید به کلید API واقعی یا سهمیه‌ی واقعی وابسته باشند.

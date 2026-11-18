@@ -31,6 +31,8 @@ THINK = os.getenv("THINK", "0") == "1"
 def is_thinking_model(name: str | None = None) -> bool:
     """مدل‌های Qwen3 در حالت خاموش هم نیاز به «/no_think» دارند."""
     return (name or MODEL_NAME).lower().startswith("qwen3")
+
+
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 NUM_CTX = int(os.getenv("NUM_CTX", "8192"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "320"))
@@ -46,8 +48,9 @@ class LLMError(RuntimeError):
     """خطای ارتباط با مدل محلی."""
 
 
-def _options(max_tokens: int | None = None, temperature: float | None = None,
-             num_ctx: int | None = None) -> dict:
+def _options(
+    max_tokens: int | None = None, temperature: float | None = None, num_ctx: int | None = None
+) -> dict:
     return {
         "num_ctx": NUM_CTX if num_ctx is None else num_ctx,
         "num_predict": MAX_TOKENS if max_tokens is None else max_tokens,
@@ -78,6 +81,7 @@ def model_is_available() -> bool:
         names = {m.get("name", "") for m in r.json().get("models", [])}
     except (requests.RequestException, ValueError):
         return False
+
     def canon(name: str) -> str:
         return name[:-7] if name.endswith(":latest") else name
 
@@ -115,8 +119,9 @@ def generate(
     }
     url = f"{OLLAMA_HOST}/api/chat"
 
+    request_timeout = max(1, timeout or LLM_TIMEOUT)
     try:
-        resp = requests.post(url, json=payload, timeout=timeout or LLM_TIMEOUT)
+        resp = requests.post(url, json=payload, timeout=request_timeout)
     except requests.Timeout as exc:
         raise LLMError("مدل محلی در زمان مجاز پاسخ نداد.") from exc
     except requests.RequestException as exc:
@@ -143,8 +148,7 @@ def generate(
             "prompt_eval_count": data.get("prompt_eval_count", 0),
             "duration_s": round(data.get("total_duration", 0) / 1e9, 2),
             "tok_per_s": round(
-                (data.get("eval_count", 0) or 0)
-                / max(data.get("eval_duration", 1) / 1e9, 0.001),
+                (data.get("eval_count", 0) or 0) / max(data.get("eval_duration", 1) / 1e9, 0.001),
                 1,
             ),
             "thinking": bool((data.get("message") or {}).get("thinking")),
@@ -166,8 +170,13 @@ def preload() -> bool:
     try:
         requests.post(
             f"{OLLAMA_HOST}/api/generate",
-            json={"model": MODEL_NAME, "prompt": "سلام", "stream": False, "keep_alive": KEEP_ALIVE,
-                  "options": {"num_predict": 8, "num_ctx": 512}},
+            json={
+                "model": MODEL_NAME,
+                "prompt": "سلام",
+                "stream": False,
+                "keep_alive": KEEP_ALIVE,
+                "options": {"num_predict": 8, "num_ctx": 512},
+            },
             timeout=LLM_TIMEOUT,
         )
         return True
