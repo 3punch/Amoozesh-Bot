@@ -1,0 +1,170 @@
+"""
+تست سریع یک سوال از خط فرمان — بدون تلگرام.
+
+    python ask.py "استاد آذر ابوالقاسمی چطور استادی هستن"
+    python ask.py --context "استاد ایزدیخواه چطوره؟"   # فقط زمینه‌ای که به مدل می‌رود
+    python ask.py --json  "بهینه سازی خطی برای ورودی ۱۴۰۳ مجازه؟"
+    python ask.py --deep  "غلامیان یا تهرانیان؟"       # همان مسیر دکمه‌ی «تحلیل با مدل»
+    python ask.py --api   "غلامیان یا تهرانیان؟"       # تحلیل با سرویس ابری (نیازمند API_KEY)
+
+اگر Ollama در دسترس نباشد، فقط زمینه و بررسی قطعی چاپ می‌شود.
+"""
+
+import argparse
+import json
+import sys
+
+import api_llm
+import deep
+import fallback
+import llm
+from prompts import build_analysis_messages, build_messages
+from retrieval import DataStore, estimate_tokens
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="پرسش مستقیم از ربات (بدون تلگرام)")
+    parser.add_argument("question", nargs="+", help="متن سوال")
+    parser.add_argument("--context", action="store_true", help="فقط زمینه را نشان بده")
+    parser.add_argument("--json", action="store_true", help="خروجی JSON")
+    parser.add_argument("--deep", action="store_true",
+                        help="حالت «تحلیل با مدل» (متن کامل نظرها)")
+    parser.add_argument("--api", action="store_true",
+                        help="تحلیل با سرویس ابری (نیازمند API_KEY)")
+    args = parser.parse_args()
+
+    question = " ".join(args.question).strip()
+    store = DataStore(".")
+
+    if args.deep or args.api:
+        provider = "api" if args.api else "local"
+        context, meta = deep.build_deep_context(store, question)
+        messages = build_analysis_messages(question, context)
+        result = {
+            "question": question,
+            "mode": provider,
+            "facts": fallback.answer(store, question),
+            "stats": meta,
+            "prompt_tokens_estimate": estimate_tokens(messages[0]["content"]),
+            "context": context,
+            "answer": None,
+            "error": None,
+            "verified": None,
+            "speed": None,
+        }
+        if args.context:
+            pass
+        elif provider == "api" and not api_llm.enabled():
+            result["error"] = "کلید API تنظیم نشده است (API_KEY)."
+        elif provider == "local" and not llm.wait_for_server(timeout=20):
+            result["error"] = f"سرویس Ollama روی {llm.OLLAMA_HOST} بالا نیست."
+        else:
+            run = deep.analyze(store, question, provider=provider)
+            result["verified"] = run["ok"]
+            result["verify_reason"] = run["reason"]
+            result["answer"] = run["text"] or None
+            result["speed"] = run.get("stats")
+            if not run["ok"]:
+                result["rejected_model_text"] = run.get("text") or run.get("raw")
+            if run.get("model_failed"):
+                result["error"] = run["reason"]
+
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result["answer"] or args.context else 1
+
+        print(f"❓ سوال (حالت {provider}): {question}")
+        print(f"👨‍🏫 استاد(های) پرسیده‌شده: {meta.get('professors') or '—'}")
+        print(f"📄 زمینه‌ی کامل: {meta.get('chars')} کاراکتر | "
+              f"درس‌ها: {meta.get('courses')}")
+        if result["speed"]:
+            sp = result["speed"]
+            print(f"⏱️ {sp.get('duration_s')}s | {sp.get('eval_count')} توکن | "
+                  f"{sp.get('tok_per_s')} توکن/ثانیه | زمینه {sp.get('prompt_eval_count')} توکن")
+        if args.context:
+            print("\n" + "=" * 60 + "\n📄 زمینه:\n" + "=" * 60)
+            print(context)
+        elif result["answer"]:
+            label = api_llm.model_label() if provider == "api" else llm.MODEL_NAME
+            print("\n" + "=" * 60 + f"\n🧠 تحلیل {label}:\n" + "=" * 60)
+            print(result["answer"])
+        elif result.get("rejected_model_text"):
+            print("\n" + "=" * 60 + "\n🚫 تحلیل رد شد:\n" + "=" * 60)
+            print(f"دلیل: {result.get('verify_reason')}")
+            print(result["rejected_model_text"])
+        elif result["error"]:
+            print(f"\n⚠️ مدل اجرا نشد: {result['error']}")
+        return 0 if result["answer"] or args.context else 1
+
+    context, stats = store.build_context(question)
+    messages = build_messages(question, context)
+
+    result = {
+        "question": question,
+        "facts": fallback.answer(store, question),
+        "stats": stats,
+        "prompt_tokens_estimate": estimate_tokens(messages[0]["content"]) + estimate_tokens(question),
+        "context": context,
+        "answer": None,
+        "error": None,
+    }
+
+    result["verified"] = None
+    result["speed"] = None
+
+    if not args.context:
+        if not llm.wait_for_server(timeout=20):
+            result["error"] = f"سرویس Ollama روی {llm.OLLAMA_HOST} بالا نیست."
+        elif not llm.model_is_available():
+            result["error"] = f"مدل «{llm.MODEL_NAME}» نصب نیست (ollama pull {llm.MODEL_NAME})."
+        else:
+            try:
+                raw = llm.generate(messages)
+                text = fallback.sanitize_model_text(
+                    raw, allow_verdict=bool(stats.get("verdict"))
+                )
+                ok, why = fallback.verify_model_text(text, context)
+                result["verified"] = ok
+                result["verify_reason"] = why
+                result["answer"] = text if ok else None
+                result["speed"] = dict(llm.LAST_STATS)
+                if not ok:
+                    result["rejected_model_text"] = text
+            except llm.LLMError as exc:
+                result["error"] = str(exc)
+
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["answer"] or args.context else 1
+
+    print(f"❓ سوال: {question}")
+    print(f"📊 کلیدواژه‌ها: {'، '.join(stats['keywords']) or '—'}")
+    print(f"👨‍🏫 استاد(های) پیدا‌شده: {stats['professors'] or '—'}")
+    print(f"📚 ردیف‌های درس: {stats['courses']} | زمینه: {stats['chars']} کاراکتر "
+          f"(~{stats['tokens']} توکن) | کل پرامپت: ~{result['prompt_tokens_estimate']} توکن")
+    if stats.get("verdict"):
+        print(f"⚖️ حکم قطعی: {stats['verdict']}")
+    print("\n" + "=" * 60 + "\n📄 زمینه‌ی ارسالی به مدل:\n" + "=" * 60)
+    print(context)
+    if result["facts"]:
+        print("\n" + "=" * 60 + "\n📋 پاسخ قطعی ربات (بدون مدل):\n" + "=" * 60)
+        print(result["facts"])
+    if result["speed"]:
+        sp = result["speed"]
+        print(f"\n⏱️ {sp.get('model')}: {sp.get('duration_s')}s | "
+              f"{sp.get('eval_count')} توکن تولید | {sp.get('tok_per_s')} توکن/ثانیه | "
+              f"زمینه {sp.get('prompt_eval_count')} توکن")
+    if result["answer"]:
+        print("\n" + "=" * 60 + f"\n🤖 جمع‌بندی {llm.MODEL_NAME} (تأییدشده):\n" + "=" * 60)
+        print(result["answer"])
+    elif result.get("rejected_model_text"):
+        print("\n" + "=" * 60 + "\n🚫 جمع‌بندی مدل رد شد:\n" + "=" * 60)
+        print(f"دلیل: {result.get('verify_reason')}")
+        print(result["rejected_model_text"])
+    elif result["error"]:
+        print(f"\n⚠️ مدل اجرا نشد: {result['error']}")
+    return 0 if result["answer"] or args.context else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

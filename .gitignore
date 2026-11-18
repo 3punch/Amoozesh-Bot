@@ -50,9 +50,14 @@ data/
 *.sqlite
 *.sqlite3
 
+# Ollama local models
+.ollama/
+
 # Logs
 *.log
 logs/
+reports/
+bench-results.json
 
 # Testing
 .coverage

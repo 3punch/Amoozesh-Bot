@@ -1,0 +1,223 @@
+name: Run Telegram Bot 24/7
+
+# ربات کاملاً داخل GitHub Actions اجرا می‌شود:
+#   نصب Ollama → مدل Qwen → اجرای ربات → چرخش خودکار قبل از سقف ۶ ساعته
+# هیچ چیزی لازم نیست روی سیستم خودت اجرا شود.
+#
+# سه حالت پاسخ:
+#   • سریع (همیشه): پاسخ از داده، زیر یک ثانیه.
+#   • مدل محلی (انتخابی): دکمه‌ی زیر پاسخ یا /deep؛ ۳ بار در روز برای هر کاربر.
+#   • API ابری (انتخابی): دکمه‌ی ⚡ یا /api؛ ۱ بار در روز برای هر کاربر.
+#
+# سهمیه‌ی هر کاربر روی شاخه‌ی `bot-state` نگه‌داری می‌شود (نه main، تا ربات ری‌استارت نشود).
+#
+# cron هر ۵ ساعت یک run در صف می‌گذارد؛ با concurrency (بدون cancel) همیشه
+# دقیقاً یک نمونه در حال اجراست و نمونه‌ی بعدی بلافاصله جایش را می‌گیرد.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 */5 * * *'
+  workflow_dispatch:
+
+# فقط یک نمونه هم‌زمان؛ نمونه‌ی بعدی در صف می‌ماند (بدون قطع‌شدن نمونه‌ی فعال)
+concurrency:
+  group: telegram-bot
+  cancel-in-progress: false
+
+permissions:
+  contents: write      # برای ذخیره‌ی سهمیه‌ی روزانه روی شاخه‌ی bot-state
+  issues: write        # برای خبر دادن شکست تست‌ها (وقتی ربات بالا نمی‌آید)
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350          # سقف Actions برای هر job = ۳۶۰ دقیقه
+    env:
+      # Qwen2.5:7b: فارسی بهتر از Gemma، بدون حالت استدلال. مقایسه: docs/model-benchmark.md
+      MODEL_NAME: qwen2.5:7b
+      # "0" = پاسخ فوری از داده‌های قطعی (بدون جمع‌بندی خودکار مدل).
+      MODEL_SUMMARY: "0"
+      # "1" = دکمه‌ی «🧠 تحلیل با مدل» زیر پاسخ + دستور /deep فعال باشد.
+      # مدل فقط وقتی صدا زده می‌شود که کاربر خودش بخواهد؛ پاسخ سریع همان اول می‌آید.
+      DEEP_MODE: "1"
+      # --- API ابری (اختیاری): بدون کلید، دکمه‌ی ⚡ و /api نمایش داده نمی‌شوند.
+      API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      API_MODEL: qwen/qwen-2.5-72b-instruct
+      API_BASE_URL: https://openrouter.ai/api/v1
+      # --- سهمیه‌ی روزانه‌ی هر کاربر (روی شاخه‌ی bot-state)
+      QUOTA_PERSIST: "1"
+      QUOTA_STATE_BRANCH: bot-state
+      THINK: "0"
+      OLLAMA_HOST: http://127.0.0.1:11434
+      OLLAMA_KEEP_ALIVE: 6h
+      OLLAMA_NUM_PARALLEL: "1"
+      NUM_CTX: "3072"
+      MAX_TOKENS: "120"
+      MAX_CONTEXT_CHARS: "4000"
+      BOT_RUN_MINUTES: "320"      # هر نمونه ۵ ساعت و ۲۰ دقیقه
+      BOT_JOB_MINUTES: "335"      # کل job حداکثر ۵ ساعت و ۳۵ دقیقه
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: pip
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # وزن‌های مدل در کش Actions می‌مانند؛ فقط وقتی کش خالی/منقضی شده باشد
+      # دانلود انجام می‌شود. (کش ۷ روز بدون استفاده یا با پر شدن ۱۰ گیگ پاک می‌شود،
+      # ولی این ربات هر ~۵ ساعت اجرا می‌شود و کش داغ می‌ماند.)
+      - name: Resolve model cache key
+        if: env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'
+        id: model_key
+        run: |
+          # «:» در نام مدل را برای کلید کش ساده می‌کنیم: qwen2.5:7b → qwen2-5-7b
+          key=$(echo "$MODEL_NAME" | tr ':.@/' '----')
+          echo "key=ollama-$key" >> "$GITHUB_OUTPUT"
+          echo "کلید کش مدل: ollama-$key"
+
+      - name: Restore model from cache
+        if: env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'
+        id: model_cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ${{ steps.model_key.outputs.key }}-v3
+          restore-keys: |
+            ${{ steps.model_key.outputs.key }}-
+            ollama-
+
+      - name: Install Ollama
+        if: env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'
+        continue-on-error: true
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama --version
+
+      - name: Start Ollama and make sure the model is present
+        if: env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1'
+        continue-on-error: true
+        env:
+          CACHE_HIT: ${{ steps.model_cache.outputs.cache-hit }}
+        run: |
+          set -u
+          command -v ollama >/dev/null || { echo "::warning::Ollama نصب نشد."; exit 0; }
+
+          mkdir -p ~/.ollama
+          nohup ollama serve > /tmp/ollama.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -fsS "$OLLAMA_HOST/api/tags" > /dev/null && break
+            sleep 2
+          done
+          if ! curl -fsS "$OLLAMA_HOST/api/tags" > /dev/null; then
+            echo "::warning::سرویس Ollama بالا نیامد؛ ربات در حالت سریع اجرا می‌شود."
+            tail -20 /tmp/ollama.log || true
+            exit 0
+          fi
+          echo "Ollama is up"
+
+          if ollama list | awk '{print $1}' | grep -qx "$MODEL_NAME"; then
+            echo "✅ مدل «$MODEL_NAME» از کش موجود است؛ دانلودی لازم نیست (cache-hit=$CACHE_HIT)."
+          else
+            echo "⬇️ مدل در کش نبود (cache-hit=$CACHE_HIT)؛ دانلود یک‌باره شروع می‌شود…"
+            started=$(date +%s)
+            ollama pull "$MODEL_NAME" || {
+              echo "::warning::دانلود مدل ناموفق بود؛ ربات در حالت سریع اجرا می‌شود."
+              exit 0
+            }
+            echo "دانلود در $(( $(date +%s) - started )) ثانیه تمام شد."
+          fi
+          ollama list
+
+          # بارگذاری در حافظه تا اولین تحلیل کاربر منتظر بارگذاری نماند
+          curl -fsS "$OLLAMA_HOST/api/generate" \
+            -d "{\"model\":\"$MODEL_NAME\",\"prompt\":\"سلام\",\"stream\":false,\"options\":{\"num_predict\":8}}" \
+            > /dev/null && echo "مدل در حافظه بارگذاری شد." || true
+
+      - name: Report model availability
+        if: always() && (env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1')
+        env:
+          CACHE_HIT: ${{ steps.model_cache.outputs.cache-hit }}
+        run: |
+          if curl -fsS "$OLLAMA_HOST/api/tags" 2>/dev/null | grep -q "$MODEL_NAME"; then
+            echo "✅ حالت مدل آماده است (cache-hit=$CACHE_HIT)."
+          else
+            echo "::warning::مدل در دسترس نیست ⇒ ربات فقط در حالت سریع کار می‌کند."
+          fi
+
+      # اگر تست‌ها شکست بخورند ربات اصلاً بالا نمی‌آید؛ پس شکست باید جایی دیده
+      # شود، نه فقط داخل لاگ. یک Issue باز می‌شود و با سبز شدن دوباره بسته می‌شود.
+      - name: Run tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          python tests/test_offline.py 2>&1 | tee /tmp/tests.txt
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            {
+              echo "ربات در این اجرا بالا نیامد چون تست‌های آفلاین شکست خوردند."
+              echo
+              echo "- کامیت: \`${GITHUB_SHA:0:7}\`"
+              echo "- اجرا: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+              echo
+              echo '```'
+              tail -60 /tmp/tests.txt
+              echo '```'
+            } > /tmp/body.md
+            num=$(gh issue list --state open --limit 50 --json number,title \
+                    --jq '.[] | select(.title | startswith("❌ تست آفلاین")) | .number' \
+                  | head -1)
+            if [ -n "$num" ]; then
+              gh issue comment "$num" --body-file /tmp/body.md || true
+            else
+              gh issue create --title "❌ تست آفلاین شکست خورد — ربات متوقف است" \
+                --body-file /tmp/body.md || true
+            fi
+          fi
+          exit "$code"
+
+      - name: Close stale failure issue
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          num=$(gh issue list --state open --limit 50 --json number,title \
+                  --jq '.[] | select(.title | startswith("❌ تست آفلاین")) | .number' \
+                | head -1)
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body "✅ تست‌ها دوباره سبز شدند؛ ربات در حال اجراست (کامیت \`${GITHUB_SHA:0:7}\`)."
+            gh issue close "$num"
+          fi
+
+      - name: Check token secret
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+            echo "::error::Secret با نام TELEGRAM_BOT_TOKEN تنظیم نشده است."
+            exit 1
+          fi
+
+      - name: Run Telegram Bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          # برای خواندن/نوشتن سهمیه در شاخه‌ی bot-state
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CHECK_UPDATES: "1"
+        run: bash scripts/run_bot.sh
+
+      - name: Show Ollama log
+        if: always() && (env.MODEL_SUMMARY == '1' || env.DEEP_MODE == '1')
+        run: tail -50 /tmp/ollama.log || true

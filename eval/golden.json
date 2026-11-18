@@ -1,0 +1,75 @@
+{
+  "note": "مجموعه‌ی طلایی برای سنجش کیفیت تحلیل مدل. هر آیتم: پرسش + موجودیت‌هایی که باید در پاسخ بیایند + چیزهایی که نباید بیایند. معیارها عمداً محافظه‌کارانه‌اند؛ هدف سنجش «فهم» و «قالب» است، نه تطبیق واژه‌به‌واژه.",
+  "items": [
+    {
+      "id": "compare-gholamian-tehranian",
+      "query": "غلامیان یا تهرانیان؟",
+      "kind": "compare",
+      "entities": ["غلامیان"],
+      "forbid": ["خوب نیست که خوب است"]
+    },
+    {
+      "id": "compare-hamami-rahim",
+      "query": "همامی یا رحیم برای ساختمان داده؟",
+      "kind": "compare",
+      "entities": ["همامی"],
+      "forbid": []
+    },
+    {
+      "id": "prof-abolghasemi",
+      "query": "استاد آذر ابوالقاسمی چطور استادی هستن",
+      "kind": "prof",
+      "entities": ["ابوالقاسمی"],
+      "forbid": ["افتضاح"]
+    },
+    {
+      "id": "prof-izadikhah",
+      "query": "استاد ایزدیخواه چطوره؟",
+      "kind": "prof",
+      "entities": ["ایزدیخواه"],
+      "forbid": []
+    },
+    {
+      "id": "prof-pourkarimi",
+      "query": "استاد پورکریمی چه استادی است؟",
+      "kind": "prof",
+      "entities": ["پورکریمی"],
+      "forbid": []
+    },
+    {
+      "id": "prof-monsef",
+      "query": "مرجان منصف چطوره؟",
+      "kind": "prof",
+      "entities": ["منصف"],
+      "forbid": []
+    },
+    {
+      "id": "course-linear-1404",
+      "query": "بهینه سازی خطی برای ورودی ۱۴۰۴ مجازه؟",
+      "kind": "course",
+      "entities": ["بهینه سازی خطی"],
+      "forbid": ["مجاز است ✅", "مجاز است."]
+    },
+    {
+      "id": "course-data-mining",
+      "query": "داده کاوی چه زمانی ارائه شده؟",
+      "kind": "course",
+      "entities": ["داده کاوی"],
+      "forbid": []
+    },
+    {
+      "id": "course-timing-hamami",
+      "query": "ساختمان داده با همامی چه زمانی است؟",
+      "kind": "course",
+      "entities": ["ساختمان داده"],
+      "forbid": []
+    },
+    {
+      "id": "honest-unknown",
+      "query": "استاد کیانی چطوره؟",
+      "kind": "honest",
+      "entities": ["کیانی"],
+      "forbid": ["نمره‌دهی او"]
+    }
+  ]
+}

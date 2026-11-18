@@ -1,0 +1,167 @@
+name: Test Model Quality
+
+# تست کیفیت مدل بدون تلگرام.
+# Actions → Test Model Quality → Run workflow
+# در کادر «question» هر سوالی می‌توانی بنویسی و پاسخ واقعی gemma3:4b را
+# همراه با زمینه‌ای که به مدل رسیده، در لاگ همین job می‌بینی.
+
+on:
+  # با هر تغییر در داده‌ها یا پرامپت، یک بار کیفیت مدل تست می‌شود
+  push:
+    paths:
+      - 'ask.py'
+      - 'retrieval.py'
+      - 'prompts.py'
+      - 'llm.py'
+      - 'fallback.py'
+      - 'professors.txt'
+      - 'courses.xlsx'
+      - 'knowledge_base.txt'
+      - '.github/workflows/model-check.yml'
+  workflow_dispatch:
+    inputs:
+      question:
+        description: 'سوال برای مدل (خالی = سه سوال نمونه)'
+        required: false
+        default: ''
+      model:
+        description: 'نام مدل در Ollama'
+        required: false
+        default: 'qwen2.5:7b'
+      deep:
+        description: 'حالت «تحلیل با مدل» را هم تست کن (کندتر است)'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  ask:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      MODEL_NAME: ${{ inputs.model || 'qwen2.5:7b' }}
+      OLLAMA_HOST: http://127.0.0.1:11434
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: pip
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-${{ env.MODEL_NAME }}-v3
+          restore-keys: |
+            ollama-
+
+      - name: Install and start Ollama
+        run: |
+          set -euo pipefail
+          : "${MODEL_NAME:?MODEL_NAME خالی است}"
+          echo "مدل: $MODEL_NAME"
+          curl -fsSL --retry 3 https://ollama.com/install.sh | sh
+          nohup ollama serve > /tmp/ollama.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -fsS "$OLLAMA_HOST/api/tags" > /dev/null && break
+            sleep 2
+          done
+          if ollama list | awk '{print $1}' | grep -qx "$MODEL_NAME"; then
+            echo "✅ مدل از کش موجود است؛ دانلودی لازم نیست."
+          else
+            echo "⬇️ مدل در کش نبود؛ دانلود…"
+            ollama pull "$MODEL_NAME"
+          fi
+          ollama list
+
+      - name: Ask the model
+        env:
+          QUESTION: ${{ inputs.question || '' }}
+          DEEP: ${{ inputs.deep == false && 'false' || 'true' }}
+        run: |
+          set -u
+          mkdir -p reports
+          report=reports/model-report.md
+          {
+            echo "# گزارش کیفیت مدل"
+            echo
+            echo "- مدل: \`$MODEL_NAME\`"
+            echo "- زمان: $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo "- کامیت: \`${GITHUB_SHA:0:7}\`"
+            echo
+          } > "$report"
+
+          if [ -z "${QUESTION// }" ]; then
+            questions=(
+              "استاد آذر ابوالقاسمی چطور استادی هستن"
+              "بهینه سازی خطی برای ورودی ۱۴۰۴ مجازه؟"
+              "استاد ایزدیخواه چطوره؟"
+              "ساختمان داده و الگوریتم ها برای ورودی ۱۴۰۴ با همامی چه زمانی ارائه شده؟"
+            )
+          else
+            questions=("$QUESTION")
+          fi
+
+          for q in "${questions[@]}"; do
+            echo "## پرسش: $q" >> "$report"
+            echo '```' >> "$report"
+            python ask.py "$q" >> "$report" 2>&1 || echo "(خطا در اجرا)" >> "$report"
+            echo '```' >> "$report"
+            echo >> "$report"
+          done
+
+          # حالت «تحلیل با مدل» (همان مسیر دکمه و /deep): فهم متن کامل
+          if [ "${DEEP:-true}" = "true" ]; then
+            {
+              echo
+              echo "## حالت تحلیل با مدل (deep)"
+              echo
+            } >> "$report"
+            for q in "غلامیان یا تهرانیان؟" "استاد آذر ابوالقاسمی چطور استادی هستن"; do
+              echo "**$q**" >> "$report"
+              echo '```' >> "$report"
+              python ask.py --deep "$q" >> "$report" 2>&1 || echo "(خطا در اجرا)" >> "$report"
+              echo '```' >> "$report"
+              echo >> "$report"
+            done
+          fi
+
+          # نسخه‌ی خلاصه‌ی پاسخ‌ها هم برای مرور سریع
+          {
+            echo
+            echo "## فقط پاسخ مدل"
+            echo
+          } >> "$report"
+          for q in "${questions[@]}"; do
+            echo "**$q**" >> "$report"
+            echo >> "$report"
+            python ask.py --json "$q" 2>/dev/null \
+              | python -c "import json,sys; d=json.load(sys.stdin); print((d.get('answer') or d.get('error') or '—'))" \
+              >> "$report" || echo "—" >> "$report"
+            echo >> "$report"
+          done
+          cat "$report"
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-quality-report
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Show Ollama log
+        if: always()
+        run: tail -30 /tmp/ollama.log || true
